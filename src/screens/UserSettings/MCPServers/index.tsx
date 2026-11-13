@@ -13,7 +13,7 @@ import MCPManager, { discoverTools } from '@/utils/mcp';
 import { getServerHeaders, getServerOAuth, listServers, parseHeaders, removeServer, saveServer, validateServerUrl } from '@/utils/mcp/config';
 import { parseMcpImport } from '@/utils/mcp/importConfig';
 import { authorizationNeeded, cancelMcpAuthorization, clearMcpAuthorization, startMcpAuthorization } from '@/utils/mcp/oauth';
-import { mcpSessions } from '@/utils/mcp/session';
+import { mcpSessions, mergeTools } from '@/utils/mcp/session';
 import { mcpStatus } from '@/utils/mcp/status';
 import { serverTransport, type MCPServer, type MCPStatus, type MCPTransport } from '@/utils/mcp/types';
 import { generateUUID } from '@/utils/constants';
@@ -69,6 +69,12 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
     const next = await listServers();
     setServers(next);
     await loadOauth(next);
+    setDraft(current => {
+      if (!current) return current;
+      const latest = next.find(item => item.id === current.id);
+      if (!latest) return null;
+      return { ...current, enabled: latest.enabled, tools: latest.tools };
+    });
   };
 
   const edit = async (server: MCPServer) => {
@@ -92,22 +98,21 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
       const transport = serverTransport(draft);
       let tools = draft.tools;
       try {
-        tools = await discoverTools(url, parsedHeaders, undefined, transport);
+        tools = mergeTools(draft.tools, await discoverTools(url, parsedHeaders, undefined, transport));
       } catch (reason) {
         if (!(await authorizationNeeded({ ...draft, url, transport }, parsedHeaders, reason))) throw reason;
         await saveServer({ ...draft, url, transport, tools }, parsedHeaders);
         mcpStatus.set(draft.id, { state: 'needs_authorization' });
         await refresh();
-        setDraft(null);
-        setHeaders('{}');
+        setDraft({ ...draft, url, transport, tools });
         return;
       }
       const saved = { ...draft, url, transport, tools };
       await saveServer(saved, parsedHeaders);
       await mcpSessions.sync(saved).catch(() => {});
       await refresh();
-      setDraft(null);
-      setHeaders('{}');
+      const latest = (await listServers()).find(item => item.id === draft.id);
+      setDraft(latest ? { ...latest, transport: serverTransport(latest) } : saved);
     } catch (reason) { reportError(reason); }
     finally { setBusy(false); }
   };
@@ -218,20 +223,27 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
     finally { setRefreshing(false); }
   };
 
+  const savedDraft = draft ? servers.find(server => server.id === draft.id) : undefined;
+  const title = importText !== null
+    ? t('settings.mcp.import')
+    : draft
+      ? (savedDraft ? (draft.name.trim() || t('common.edit')) : t('settings.mcp.add'))
+      : t('settings.mcp.title');
+
   return (
     <SafeView scrollable={false} safeAreaClassNames="pt-[21px]" containerClassNames="flex-1 flex flex-col" safeAreaStyle={{ backgroundColor: '#0E0F0F' }}>
       <View style={{ paddingTop: insets.top, paddingBottom: 20 }} className="w-full flex flex-row items-center justify-center relative">
         <TouchableOpacity disabled={busy} accessibilityRole="button" accessibilityLabel={t('common.back')} onPress={goBack} className="absolute left-0">
           <ArrowLeft size={24} color="#FFF" weight="bold" />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-medium">{t('settings.mcp.title')}</Text>
+        <Text numberOfLines={1} className="text-white text-lg font-medium" style={{ marginHorizontal: 40 }}>{title}</Text>
       </View>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pullRefresh} tintColor="#FFF" />}
         contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: insets.bottom + 24, gap: 16 }}
       >
-        <Text style={{ color: '#9F9FA0' }}>{t('settings.mcp.description')}</Text>
+        {!draft && importText === null && <Text style={{ color: '#9F9FA0' }}>{t('settings.mcp.description')}</Text>}
         {!!error && <Text accessibilityRole="alert" style={{ color: '#F97066' }}>{error}</Text>}
         {busy && <ActivityIndicator accessibilityLabel={t('common.loading')} color="#FFF" />}
         {draft ? (
@@ -247,7 +259,46 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
             <Field label={t('settings.mcp.url')} value={draft.url} editable={!busy} onChangeText={url => setDraft({ ...draft, url })} placeholder="https://example.com/mcp" />
             <Field label={t('settings.mcp.headers')} value={headers} editable={!busy} onChangeText={setHeaders} placeholder={'{"Authorization":"Bearer ..."}'} />
             <Text style={{ color: '#9F9FA0' }} className="text-sm">{t('settings.mcp.headers_hint')}</Text>
-            <Action label={t('settings.mcp.connect_save')} disabled={busy} onPress={connectAndSave} />
+            <View className="flex flex-row items-center justify-between" style={{ gap: 12 }}>
+              <Text className="text-white flex-1 font-medium">{t('settings.mcp.enable_server', { name: draft.name.trim() || t('settings.mcp.title') })}</Text>
+              <View accessibilityLabel={t('settings.mcp.enable_server', { name: draft.name.trim() || t('settings.mcp.title') })} pointerEvents={busy ? 'none' : 'auto'}>
+                <ToggleSwitch isOn={draft.enabled} onToggle={() => savedDraft ? toggle(savedDraft) : setDraft({ ...draft, enabled: !draft.enabled })} />
+              </View>
+            </View>
+            {savedDraft && (
+              <ConnectionStatus
+                server={savedDraft}
+                oauth={oauth[savedDraft.id]}
+                busy={busy}
+                onAuthorize={() => authorize(savedDraft)}
+                onCancel={() => cancelMcpAuthorization(savedDraft.id)}
+                onSignOut={() => signOut(savedDraft)}
+              />
+            )}
+            <Action label={savedDraft ? t('settings.mcp.edit_refresh') : t('settings.mcp.connect_save')} disabled={busy} onPress={connectAndSave} />
+            <View style={{ gap: 12 }}>
+              <Text className="text-white text-lg font-medium">{t('settings.mcp.functions')}</Text>
+              <Text style={{ color: '#9F9FA0' }} className="text-sm">{t('settings.mcp.tools_hint')}</Text>
+              {draft.tools.length === 0 && <Text className="text-white">{t('settings.mcp.functions_empty')}</Text>}
+              {draft.tools.map(tool => (
+                <View key={tool.name} className="flex flex-row items-center justify-between" style={{ gap: 12 }}>
+                  <View className="flex-1" style={{ gap: 4 }}>
+                    <Text className="text-white">{tool.title || tool.name}</Text>
+                    {!!tool.description && <Text style={{ color: '#9F9FA0' }} className="text-sm">{tool.description}</Text>}
+                  </View>
+                  <View accessibilityLabel={t('settings.mcp.enable_tool', { name: tool.title || tool.name })} pointerEvents={busy ? 'none' : 'auto'}>
+                    <ToggleSwitch
+                      isOn={tool.enabled !== false}
+                      onToggle={() => savedDraft ? toggleTool(savedDraft, tool.name) : setDraft({
+                        ...draft,
+                        tools: draft.tools.map(item => item.name === tool.name ? { ...item, enabled: item.enabled === false } : item),
+                      })}
+                    />
+                  </View>
+                </View>
+              ))}
+            </View>
+            {savedDraft && <Action label={t('common.remove')} disabled={busy} onPress={() => remove(savedDraft)} />}
             <Action label={t('common.cancel')} disabled={busy} onPress={goBack} />
           </View>
         ) : importText !== null ? (
@@ -261,18 +312,12 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
           <>
             {servers.length === 0 && !busy && <Text className="text-white">{t('settings.mcp.empty')}</Text>}
             {servers.map(server => (
-              <ServerCard
+              <ServerRow
                 key={server.id}
                 server={server}
-                oauth={oauth[server.id]}
                 busy={busy}
-                onToggle={() => toggle(server)}
-                onToggleTool={name => toggleTool(server, name)}
                 onEdit={() => edit(server)}
                 onRemove={() => remove(server)}
-                onAuthorize={() => authorize(server)}
-                onCancel={() => cancelMcpAuthorization(server.id)}
-                onSignOut={() => signOut(server)}
               />
             ))}
             <Action label={t('settings.mcp.add')} disabled={busy} onPress={() => {
@@ -281,7 +326,6 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
               setDraft({ id: generateUUID(), name: '', url: '', enabled: true, transport: 'streamable_http', tools: [] });
             }} />
             <Action label={t('settings.mcp.import')} disabled={busy} onPress={() => { setError(''); setImportText(''); }} />
-            <Text style={{ color: '#9F9FA0' }} className="text-sm">{t('settings.mcp.tools_hint')}</Text>
           </>
         )}
       </ScrollView>
@@ -289,54 +333,57 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
   );
 }
 
-function ServerCard({ server, oauth, busy, onToggle, onToggleTool, onEdit, onRemove, onAuthorize, onCancel, onSignOut }: {
+function ServerRow({ server, busy, onEdit, onRemove }: {
+  server: MCPServer;
+  busy: boolean;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const status = useSyncExternalStore(mcpStatus.subscribe, () => mcpStatus.get(server.id));
+  const transport: MCPTransport = serverTransport(server);
+  return (
+    <View style={{ backgroundColor: '#1B1B1E', padding: 16, borderRadius: 8, gap: 12 }}>
+      <View style={{ gap: 4 }}>
+        <Text className="text-white text-lg font-medium">{server.name}</Text>
+        <Text numberOfLines={1} style={{ color: '#9F9FA0' }}>{server.url}</Text>
+        <Text style={{ color: '#9F9FA0' }}>{transport === 'sse' ? t('settings.mcp.transport_sse') : t('settings.mcp.transport_http')}</Text>
+        <Text style={{ color: statusColor(status) }}>{statusLabel(status, t)}</Text>
+        <Text style={{ color: '#9F9FA0' }}>{server.enabled ? t('common.enabled') : t('common.disabled')}</Text>
+        <Text style={{ color: '#9F9FA0' }}>{t('settings.mcp.tool_count', { count: server.tools.filter(tool => tool.enabled !== false).length })}</Text>
+      </View>
+      <View className="flex flex-row" style={{ gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Action label={t('common.edit')} accessibilityLabel={`${t('common.edit')} ${server.name}`} disabled={busy} onPress={onEdit} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Action label={t('common.remove')} accessibilityLabel={`${t('common.remove')} ${server.name}`} disabled={busy} onPress={onRemove} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function ConnectionStatus({ server, oauth, busy, onAuthorize, onCancel, onSignOut }: {
   server: MCPServer;
   oauth?: OAuthSummary;
   busy: boolean;
-  onToggle: () => void;
-  onToggleTool: (name: string) => void;
-  onEdit: () => void;
-  onRemove: () => void;
   onAuthorize: () => void;
   onCancel: () => void;
   onSignOut: () => void;
 }) {
   const { t } = useTranslation();
   const status = useSyncExternalStore(mcpStatus.subscribe, () => mcpStatus.get(server.id));
-  const transport: MCPTransport = serverTransport(server);
   const needsSignIn = status.state === 'needs_authorization' || (!!oauth?.enabled && !oauth.hasToken);
   return (
-    <View style={{ backgroundColor: '#1B1B1E', padding: 16, borderRadius: 8, gap: 12 }}>
-      <View className="flex flex-row items-center justify-between" style={{ gap: 12 }}>
-        <View className="flex-1" style={{ gap: 4 }}>
-          <Text className="text-white text-lg font-medium">{server.name}</Text>
-          <Text numberOfLines={1} style={{ color: '#9F9FA0' }}>{server.url}</Text>
-          <Text style={{ color: '#9F9FA0' }}>{transport === 'sse' ? t('settings.mcp.transport_sse') : t('settings.mcp.transport_http')}</Text>
-          <Text style={{ color: statusColor(status) }}>{statusLabel(status, t)}</Text>
-          <Text style={{ color: '#9F9FA0' }}>{t('settings.mcp.tool_count', { count: server.tools.filter(tool => tool.enabled !== false).length })}</Text>
-        </View>
-        <View accessibilityLabel={t('settings.mcp.enable_server', { name: server.name })} pointerEvents={busy ? 'none' : 'auto'}>
-          <ToggleSwitch isOn={server.enabled} onToggle={onToggle} />
-        </View>
-      </View>
+    <View style={{ gap: 12 }}>
+      <Text style={{ color: statusColor(status) }}>{statusLabel(status, t)}</Text>
       {status.state === 'error' && (
         <Action label={t('common.copy')} disabled={busy} onPress={() => Clipboard.setString(status.message)} />
       )}
-      {server.tools.map(tool => (
-        <View key={tool.name} className="flex flex-row items-center justify-between" style={{ gap: 12 }}>
-          <Text className="text-white flex-1">{tool.title || tool.name}</Text>
-          <View accessibilityLabel={t('settings.mcp.enable_tool', { name: tool.title || tool.name })} pointerEvents={busy ? 'none' : 'auto'}>
-            <ToggleSwitch isOn={tool.enabled !== false} onToggle={() => onToggleTool(tool.name)} />
-          </View>
-        </View>
-      ))}
-      <View className="flex flex-row flex-wrap" style={{ gap: 16 }}>
-        <Action label={t('settings.mcp.edit_refresh')} disabled={busy} onPress={onEdit} />
-        <Action label={t('common.delete')} disabled={busy} onPress={onRemove} />
-        {status.state === 'authorizing' && <Action label={t('settings.mcp.cancel_authorize')} disabled={busy} onPress={onCancel} />}
-        {needsSignIn && status.state !== 'authorizing' && <Action label={t('settings.mcp.authorize')} disabled={busy} onPress={onAuthorize} />}
-        {!!oauth?.hasToken && <Action label={t('settings.mcp.deauthorize')} disabled={busy} onPress={onSignOut} />}
-      </View>
+      {status.state === 'authorizing' && <Action label={t('settings.mcp.cancel_authorize')} disabled={busy} onPress={onCancel} />}
+      {needsSignIn && status.state !== 'authorizing' && <Action label={t('settings.mcp.authorize')} disabled={busy} onPress={onAuthorize} />}
+      {!!oauth?.hasToken && <Action label={t('settings.mcp.deauthorize')} disabled={busy} onPress={onSignOut} />}
     </View>
   );
 }
@@ -370,9 +417,9 @@ function Choice({ label, selected, disabled, onPress }: { label: string; selecte
   );
 }
 
-function Action({ label, disabled, onPress }: { label: string; disabled: boolean; onPress: () => void }) {
+function Action({ label, disabled, onPress, accessibilityLabel }: { label: string; disabled: boolean; onPress: () => void; accessibilityLabel?: string }) {
   return (
-    <TouchableOpacity accessibilityRole="button" disabled={disabled} onPress={onPress} style={{ backgroundColor: '#27282A', padding: 12, borderRadius: 8, opacity: disabled ? 0.5 : 1 }}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} disabled={disabled} onPress={onPress} style={{ backgroundColor: '#27282A', padding: 12, borderRadius: 8, opacity: disabled ? 0.5 : 1 }}>
       <Text className="text-white font-medium text-center">{label}</Text>
     </TouchableOpacity>
   );

@@ -89,6 +89,8 @@
       "tool_count_other": null,
       "enable_server": null,
       "enable_tool": null,
+      "functions": null,
+      "functions_empty": null,
       "tools_hint": null,
       "status_idle": null,
       "status_connecting": null,
