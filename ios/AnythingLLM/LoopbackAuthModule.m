@@ -14,7 +14,8 @@
  * put that port into the authorize URL (`__LOOPBACK_PORT__`) and open it in an ASWebAuthenticationSession.
  * The session keeps the app in the foreground, so the listener keeps running; when the browser hits
  * `callbackPath` we resolve with the full callback URL and dismiss the sheet ourselves.
- * The OAuth logic itself (PKCE, state, token exchange) stays in JS - see src/utils/chatgpt/auth.ts.
+ * MCP sign-in calls `bind` to learn the port, registers that exact redirect URI, then `launch`.
+ * The OAuth logic itself (PKCE, state, token exchange) stays in JS.
  */
 
 static NSString *const kPortPlaceholder = @"__LOOPBACK_PORT__";
@@ -26,6 +27,8 @@ static NSString *const kReturnURL = @"anythingllm://sign-in-complete";
 @property (nonatomic, copy) RCTPromiseRejectBlock reject;
 /** Bumped whenever a sign-in settles, so stale listeners, timeouts and session callbacks become no-ops. */
 @property (atomic, assign) NSInteger sessionId;
+/** bind() is waiting for launch() to attach the callback promise. */
+@property (atomic, assign) BOOL awaitingLaunch;
 @end
 
 @implementation LoopbackAuthModule
@@ -120,6 +123,94 @@ RCT_EXPORT_METHOD(authorize:(NSString *)url
   });
 }
 
+RCT_EXPORT_METHOD(bind:(NSString *)callbackPath
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self finishWithURL:nil code:@"cancelled" message:@"Superseded by a new sign in."];
+    int fd = [self listenOnLoopback];
+    if (fd < 0) {
+      reject(@"listen_failed", @"Could not start the sign in listener.", nil);
+      return;
+    }
+    struct sockaddr_in addr;
+    socklen_t length = sizeof(addr);
+    memset(&addr, 0, sizeof(addr));
+    getsockname(fd, (struct sockaddr *)&addr, &length);
+    int port = ntohs(addr.sin_port);
+    NSInteger sid = self.sessionId;
+    self.awaitingLaunch = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      [self serveOn:fd port:port callbackPath:callbackPath sessionId:sid];
+    });
+    resolve(@(port));
+  });
+}
+
+RCT_EXPORT_METHOD(launch:(NSString *)url
+                  timeoutMs:(double)timeoutMs
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!self.awaitingLaunch) {
+      reject(@"no_session", @"Start the sign in listener before opening the browser.", nil);
+      return;
+    }
+    self.awaitingLaunch = NO;
+    NSInteger sid = self.sessionId;
+    self.resolve = resolve;
+    self.reject = reject;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeoutMs * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+      if (self.sessionId == sid) [self finishWithURL:nil code:@"timeout" message:@"Sign in timed out."];
+    });
+    [self openURL:url sessionId:sid];
+  });
+}
+
+/** Returns a listening socket, or -1. Caller must be on the main queue and must have finished any previous session. */
+- (int)listenOnLoopback
+{
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  int yes = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_len = sizeof(addr);
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(0);
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 4) != 0) {
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+- (void)openURL:(NSString *)url sessionId:(NSInteger)sid
+{
+  __weak LoopbackAuthModule *weakSelf = self;
+  ASWebAuthenticationSession *session =
+    [[ASWebAuthenticationSession alloc] initWithURL:[NSURL URLWithString:url]
+                                  callbackURLScheme:@"anythingllm"
+                                  completionHandler:^(NSURL *callbackURL, NSError *error) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        LoopbackAuthModule *strongSelf = weakSelf;
+        if (strongSelf && strongSelf.sessionId == sid) {
+          [strongSelf finishWithURL:nil code:@"cancelled" message:@"Sign in was cancelled."];
+        }
+      });
+    }];
+  session.presentationContextProvider = self;
+  session.prefersEphemeralWebBrowserSession = NO;
+  self.authSession = session;
+  if (![session start]) {
+    [self finishWithURL:nil code:@"no_browser" message:@"Could not open the sign in page."];
+  }
+}
+
 RCT_EXPORT_METHOD(cancel)
 {
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -132,15 +223,16 @@ RCT_EXPORT_METHOD(cancel)
 {
   RCTPromiseResolveBlock resolve = self.resolve;
   RCTPromiseRejectBlock reject = self.reject;
-  if (!resolve || !reject) return;
   self.resolve = nil;
   self.reject = nil;
+  self.awaitingLaunch = NO;
   self.sessionId += 1;
 
   ASWebAuthenticationSession *session = self.authSession;
   self.authSession = nil;
   [session cancel];
 
+  if (!resolve || !reject) return;
   if (callbackURL) resolve(callbackURL);
   else reject(code, message, nil);
 }

@@ -33,14 +33,28 @@ const sourcemapFolder = path.join('sourcemaps', 'android', `v${version}-${versio
 fs.mkdirSync(sourcemapFolder, { recursive: true });
 const sourcemapPath = path.join(sourcemapFolder, 'index.android.bundle.map');
 
-// Bundle the React Native app
-console.log('Bundling React Native app...');
-executeCommand(`npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res --sourcemap-output "${sourcemapPath}"`);
-console.log(`Sourcemap saved to: ${sourcemapPath}`);
-
-// Build the Android app
+// Debug builds package the JS bundle themselves (see debuggableVariants in
+// android/app/build.gradle). Writing a second copy into src/main/assets would
+// collide with that generated asset.
 console.log('Building Android app...');
 executeCommand(`cd android && ${gradleCommand} assembleDebug`);
+
+const generatedSourcemap = path.join(
+  'android',
+  'app',
+  'build',
+  'generated',
+  'sourcemaps',
+  'react',
+  'debug',
+  'index.android.bundle.map'
+);
+if (!fs.existsSync(generatedSourcemap)) {
+  console.error(`Sourcemap not found at ${generatedSourcemap}`);
+  process.exit(1);
+}
+fs.copyFileSync(generatedSourcemap, sourcemapPath);
+console.log(`Sourcemap saved to: ${sourcemapPath}`);
 
 // Ask user to install the APK
 rl.question('Install the apk? (y/n): ', (answer) => {

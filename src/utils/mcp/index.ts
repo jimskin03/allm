@@ -4,8 +4,12 @@ import { isAbortError, throwIfAborted } from '@/utils/chat/abort';
 import i18n from '@/i18n';
 import { MCPClient } from './client';
 import { getServerHeaders, listServers } from './config';
+import { materializeToolResult } from './images';
+import { ensureFreshToken, resolveHeaders } from './oauth';
+import { SseMCPClient } from './sseClient';
+import { mcpSessions } from './session';
 import { toolNameFor } from './toolNames';
-import { type MCPServer, type MCPTool, type MCPToolResult } from './types';
+import { serverTransport, type MCPServer, type MCPTool, type MCPToolResult } from './types';
 
 /** Keep binary payloads out of the model's text context and the chat activity log. */
 export function formatToolResult(result: MCPToolResult): string {
@@ -21,8 +25,8 @@ export function formatToolResult(result: MCPToolResult): string {
   return result.isError ? `Error: ${text}` : text;
 }
 
-export async function discoverTools(url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<MCPTool[]> {
-  const client = new MCPClient(url, headers);
+export async function discoverTools(url: string, headers: Record<string, string>, signal?: AbortSignal, transport: MCPServer['transport'] = 'streamable_http'): Promise<MCPTool[]> {
+  const client = transport === 'sse' ? new SseMCPClient(url, headers) : new MCPClient(url, headers);
   try { return await client.listTools(signal); }
   finally { await client.close(); }
 }
@@ -39,7 +43,7 @@ class MCPManager {
   }
 
   get tools(): ToolManagerTool[] {
-    return this.servers.filter(server => server.enabled).flatMap(server => server.tools.map(tool => this.toTool(server, tool)));
+    return this.servers.filter(server => server.enabled).flatMap(server => server.tools.filter(tool => tool.enabled !== false).map(tool => this.toTool(server, tool)));
   }
 
   private toTool(server: MCPServer, tool: MCPTool): ToolManagerTool {
@@ -62,13 +66,16 @@ class MCPManager {
       },
       config: {},
       execute: async (rawArgs, streamEmitter, context) => {
-        let client: MCPClient | undefined;
         try {
           throwIfAborted(context?.signal);
           const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
           if (!args || typeof args !== 'object' || Array.isArray(args)) return 'Error: MCP tool arguments must be a JSON object.';
+          const toolStillListed = (candidate: MCPServer | undefined): candidate is MCPServer => !!candidate?.enabled
+            && candidate.url === server.url
+            && serverTransport(candidate) === serverTransport(server)
+            && candidate.tools.some(item => item.name === tool.name && item.enabled !== false);
           const current = (await listServers()).find(item => item.id === server.id);
-          if (!current?.enabled || current.url !== server.url || !current.tools.some(item => item.name === tool.name)) {
+          if (!toolStillListed(current)) {
             return 'Error: This MCP tool is no longer available. Refresh the server connection in Settings.';
           }
           if (context?.autoApproveTools) return 'Error: MCP tools are not available to unattended jobs.';
@@ -83,16 +90,15 @@ class MCPManager {
           throwIfAborted(context?.signal);
           // Settings may change while an approval card is waiting for the user.
           const latest = (await listServers()).find(item => item.id === server.id);
-          if (!latest?.enabled || latest.url !== current.url || !latest.tools.some(item => item.name === tool.name)) {
+          if (!toolStillListed(latest) || latest.url !== current.url) {
             return 'Error: This MCP tool is no longer available.';
           }
-          client = new MCPClient(latest.url, await getServerHeaders(latest.id));
-          return formatToolResult(await client.callTool(tool.name, args, context?.signal));
+          const ready = { ...latest, transport: serverTransport(latest) };
+          const headers = resolveHeaders(await getServerHeaders(latest.id), await ensureFreshToken(ready));
+          return formatToolResult(await materializeToolResult(await mcpSessions.call(ready, headers, tool.name, args, context?.signal)));
         } catch (error) {
           if (isAbortError(error)) throw error;
           return `Error: ${error instanceof Error ? error.message : 'MCP tool execution failed.'}`;
-        } finally {
-          await client?.close();
         }
       },
     };

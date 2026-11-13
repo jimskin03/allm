@@ -14,6 +14,11 @@ apply from: "../../node_modules/react-native-config/android/dotenv.gradle"
  */
 react {
     autolinkLibrariesWithApp()
+    // Debug installs from Android Studio do not start Metro. Bundle the JS into
+    // those variants too, so the app loads index.android.bundle from assets
+    // instead of showing the "Unable to load script" red screen. When Metro is
+    // running, the runtime still prefers it.
+    debuggableVariants = []
 }
 
 /**
@@ -45,7 +50,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 93
-        versionName "1.3.2"
+        versionName "1.5.1"
         ndk {
             abiFilters "arm64-v8a"
         }
@@ -150,5 +155,15 @@ project.ext.vectoricons = [
 ]
 
 apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
+
+// Room's annotation processor loads sqlite-jdbc, which extracts a native DLL into
+// java.io.tmpdir. The kapt worker on Windows often has that set to C:\WINDOWS, which
+// is not writable, so :app:kaptDebugKotlin dies with "No native library found".
+def sqliteJdbcTmp = new File(System.getProperty("user.home"), ".gradle/sqlite-jdbc-tmp")
+sqliteJdbcTmp.mkdirs()
+def sqliteJdbcTmpArg = "-Dorg.sqlite.tmpdir=" + sqliteJdbcTmp.absolutePath.replace("\\", "/")
+tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
+    kaptProcessJvmArgs.add(sqliteJdbcTmpArg)
+}
 
 

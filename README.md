@@ -165,16 +165,17 @@ Basically imagine Openclaw or Heremes agent, but fully on-device first, with all
 ### Connecting an MCP server
 
 1. Open **Settings > MCP servers > Add MCP server**.
-2. Enter a name and the server's Streamable HTTP endpoint, for example `https://your-server.example/mcp`.
-3. If required, add authentication headers as JSON: `{"Authorization":"Bearer your-token"}`. Headers are saved in the device keychain, separately from connection metadata.
-4. Tap **Connect and save** to test the connection and discover its tools.
-5. Use the tools in chat. Individual tools can be switched off under **Chat > Tools > App connections**. Each remote call uses the existing approval card; **Always approve** can be revoked under **Settings > Tool auto-approvals**.
+2. Enter a name, choose **Streamable HTTP** or **SSE**, and enter the endpoint, for example `https://your-server.example/mcp`.
+3. If required, add authentication headers as JSON: `{"Authorization":"Bearer your-token"}`. Headers and OAuth tokens are saved in the device keychain, separately from connection metadata.
+4. Tap **Connect and save** to test the connection and discover its tools. If the server requires OAuth, tap **Sign in**. The app registers a loopback redirect, opens the browser, and keeps the session for later tool calls.
+5. Use **Import JSON** to paste a `mcpServers` document. Entries that only launch a local command are skipped.
+6. Use the tools in chat. Switch individual tools off on the server card or under **Chat > Tools > App connections**. Each remote call uses the existing approval card; **Always approve** can be revoked under **Settings > Tool auto-approvals**.
 
-Use **Edit / refresh tools** and **Connect and save** to update a server's discovered tools. Disabling a server removes all its tools from chat. Deleting it removes its credentials and tool preferences.
+Use **Edit / refresh tools** or pull to refresh to update a server's discovered tools. A tool you switched off stays off across that refresh. Disabling a server removes all its tools from chat. Deleting it removes its credentials and tool preferences.
 
-Supports JSON and SSE responses over [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), including session and protocol negotiation, paginated discovery, and cancellation. On-device models need a template that supports tool calling. MCP tools apply to chats handled on the phone, using on-device or external model providers; chats forwarded to an AnythingLLM instance use that instance's tools.
+Supports JSON and SSE responses over [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) and the legacy HTTP+SSE transport, including session reuse, reconnect, protocol negotiation, paginated discovery, cancellation, and browser OAuth (protected-resource discovery, PKCE, and dynamic client registration). Image tool results are saved on the device and the model receives the file path. On-device models need a template that supports tool calling. MCP tools apply to chats handled on the phone, using on-device or external model providers; chats forwarded to an AnythingLLM instance use that instance's tools.
 
-Local `stdio` command servers, the legacy HTTP+SSE transport, browser OAuth, MCP resources/prompts, binary result rendering, resumable SSE reconnection, and unattended scheduled MCP calls are not supported. Use an HTTP bridge for command-based servers. For a server on another computer, use its LAN address reachable from your phone rather than `localhost`.
+Local `stdio` command servers, MCP resources/prompts as first-class chat features, and unattended scheduled MCP calls are not supported. Use an HTTP bridge for command-based servers. For a server on another computer, use its LAN address reachable from your phone rather than `localhost`.
 
 ## 🛠️ Development
 

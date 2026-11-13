@@ -1,13 +1,34 @@
 import { linkAbortSignal, throwIfAborted } from '@/utils/chat/abort';
 import { type MCPTool, type MCPToolResult } from './types';
 
-const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
+export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 type Message = { jsonrpc: '2.0'; id?: number | string; method?: string; params?: any; result?: any; error?: { code: number; message: string } };
+
+/** Shared by Streamable HTTP and legacy SSE. Rejects malformed pages instead of trusting them. */
+export function readToolPage(page: any, seen: Set<string>): { tools: MCPTool[]; cursor?: string } {
+  if (!Array.isArray(page?.tools)) throw new Error('MCP server returned an invalid tool list.');
+  const tools: MCPTool[] = [];
+  for (const tool of page.tools) {
+    const schema = tool?.inputSchema;
+    if (typeof tool?.name !== 'string' || !tool.name || schema?.type !== 'object'
+      || (tool.title !== undefined && typeof tool.title !== 'string')
+      || (tool.description !== undefined && typeof tool.description !== 'string')
+      || (schema.properties !== undefined && (!schema.properties || typeof schema.properties !== 'object' || Array.isArray(schema.properties)))
+      || (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.some((key: unknown) => typeof key !== 'string')))) {
+      throw new Error('MCP server returned an invalid tool definition.');
+    }
+    if (seen.has(tool.name)) throw new Error('MCP server returned duplicate tool names.');
+    seen.add(tool.name);
+    tools.push(tool);
+  }
+  const cursor = page.nextCursor;
+  return { tools, cursor };
+}
 
 /**
  * Streamable HTTP using native XHR, whose incremental responseText works on Android.
  * React Native's default fetch buffers bodies and cannot consume an open SSE response.
- * Each client owns one short-lived MCP session; tool calls are never retried automatically.
+ * A session may keep one client open. Tool calls are never retried automatically.
  */
 export class MCPClient {
   private sessionId?: string;
@@ -15,7 +36,12 @@ export class MCPClient {
   private nextId = 0;
   private supportsTools = false;
 
-  constructor(private url: string, private headers: Record<string, string> = {}, private timeoutMs = 60_000) {}
+  constructor(
+    private url: string,
+    private headers: Record<string, string> = {},
+    private timeoutMs = 60_000,
+    private clientName = 'anythingllm-mobile',
+  ) {}
 
   private send(message: Message, signal?: AbortSignal | null, method = 'POST'): Promise<any> {
     throwIfAborted(signal);
@@ -150,7 +176,7 @@ export class MCPClient {
     const result = await this.request('initialize', {
       protocolVersion: PROTOCOL_VERSIONS[0],
       capabilities: {},
-      clientInfo: { name: 'anythingllm-mobile', version: '1.0.0' },
+      clientInfo: { name: this.clientName, version: '1.0.0' },
     }, signal);
     if (!PROTOCOL_VERSIONS.includes(result?.protocolVersion)) throw new Error('The MCP server selected an unsupported protocol version.');
     this.protocolVersion = result.protocolVersion;
@@ -162,24 +188,13 @@ export class MCPClient {
     await this.connect(signal);
     if (!this.supportsTools) return [];
     const tools: MCPTool[] = [];
+    const seen = new Set<string>();
     const cursors = new Set<string>();
     let cursor: string | undefined;
     do {
-      const page = await this.request('tools/list', cursor ? { cursor } : {}, signal);
-      if (!Array.isArray(page?.tools)) throw new Error('MCP server returned an invalid tool list.');
-      for (const tool of page.tools) {
-        const schema = tool?.inputSchema;
-        if (typeof tool?.name !== 'string' || !tool.name || schema?.type !== 'object'
-          || (tool.title !== undefined && typeof tool.title !== 'string')
-          || (tool.description !== undefined && typeof tool.description !== 'string')
-          || (schema.properties !== undefined && (!schema.properties || typeof schema.properties !== 'object' || Array.isArray(schema.properties)))
-          || (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.some(key => typeof key !== 'string')))) {
-          throw new Error('MCP server returned an invalid tool definition.');
-        }
-        if (tools.some(existing => existing.name === tool.name)) throw new Error('MCP server returned duplicate tool names.');
-        tools.push(tool);
-      }
-      cursor = page.nextCursor;
+      const page = readToolPage(await this.request('tools/list', cursor ? { cursor } : {}, signal), seen);
+      tools.push(...page.tools);
+      cursor = page.cursor;
       if (cursor !== undefined && (typeof cursor !== 'string' || cursors.has(cursor))) throw new Error('MCP server returned an invalid pagination cursor.');
       if (cursor) cursors.add(cursor);
     } while (cursor);

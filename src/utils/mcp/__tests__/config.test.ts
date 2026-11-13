@@ -23,11 +23,11 @@ jest.mock('react-native-keychain', () => ({
   resetGenericPassword: jest.fn(async ({ service }) => mockKeychain.delete(service)),
 }));
 
-import { clearServers, getServerHeaders, listServers, parseHeaders, removeServer, saveServer, validateServerUrl } from '../config';
+import { clearServers, getServerHeaders, getServerOAuth, listServers, parseHeaders, removeServer, saveServer, saveServerOAuth, validateServerUrl } from '../config';
 import { toolNameFor } from '../toolNames';
 import { type MCPServer } from '../types';
 
-const server: MCPServer = { id: '12345678-abcd-1234-abcd-123456789012', name: 'Test', url: 'https://example.com/mcp', enabled: true, tools: [] };
+const server: MCPServer = { id: '12345678-abcd-1234-abcd-123456789012', name: 'Test', url: 'https://example.com/mcp', enabled: true, transport: 'streamable_http', tools: [] };
 
 beforeEach(() => {
   for (const key of Object.keys(mockStorage)) delete mockStorage[key];
@@ -77,6 +77,15 @@ test('endpoint edits revoke existing tool approvals and toggles', async () => {
   await saveServer({ ...server, url: 'https://other.example.com/mcp' }, {});
   expect(mockStorage.tool_auto_approvals).toEqual({ builtInTool: { approvedAt: 1 } });
   expect(mockStorage.tools).toEqual({ builtInTool: true });
+});
+
+test('keeps OAuth tokens in the keychain and drops them when the endpoint changes', async () => {
+  await saveServer(server, {});
+  await saveServerOAuth(server.id, { enabled: true, accessToken: 'oauth-token', refreshToken: 'refresh' });
+  expect(JSON.stringify(mockStorage)).not.toContain('oauth-token');
+  expect(await getServerOAuth(server.id)).toMatchObject({ accessToken: 'oauth-token' });
+  await saveServer({ ...server, url: 'https://other.example.com/mcp' }, {});
+  expect(await getServerOAuth(server.id)).toBeNull();
 });
 
 test('removal and app reset erase credentials and saved connections', async () => {

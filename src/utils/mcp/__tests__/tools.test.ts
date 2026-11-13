@@ -1,4 +1,10 @@
-jest.mock('../config', () => ({ listServers: jest.fn(), getServerHeaders: jest.fn() }));
+jest.mock('../config', () => ({
+  listServers: jest.fn(),
+  getServerHeaders: jest.fn(),
+  getServerOAuth: jest.fn(async () => null),
+  saveServer: jest.fn(),
+  saveServerOAuth: jest.fn(),
+}));
 jest.mock('../client', () => ({ MCPClient: jest.fn() }));
 jest.mock('@/utils/ToolsManager/toolApproval', () => ({ __esModule: true, default: { request: jest.fn() } }));
 jest.mock('@/i18n', () => ({ __esModule: true, default: { t: (key: string) => key } }));
@@ -6,6 +12,7 @@ jest.mock('@/i18n', () => ({ __esModule: true, default: { t: (key: string) => ke
 import MCPManager, { discoverTools, formatToolResult } from '../index';
 import { listServers, getServerHeaders } from '../config';
 import { MCPClient } from '../client';
+import { mcpSessions } from '../session';
 import ToolApproval from '@/utils/ToolsManager/toolApproval';
 import { toolNameFor } from '../toolNames';
 import { type MCPServer, type MCPTool } from '../types';
@@ -21,14 +28,16 @@ const server: MCPServer = {
   id: '12345678-abcd-1234-abcd-123456789012', name: 'Weather', url: 'https://example.com/mcp', enabled: true,
   tools: [{ name: 'weather.forecast', title: 'Forecast', description: 'Get the weather', inputSchema: schema }],
 };
-const mockClient = { callTool: jest.fn(), listTools: jest.fn(), close: jest.fn() };
+const mockClient = { callTool: jest.fn(), listTools: jest.fn(), close: jest.fn(async () => {}) };
 
 beforeEach(async () => {
+  await mcpSessions.reset();
   jest.clearAllMocks();
   (listServers as jest.Mock).mockResolvedValue([server]);
   (getServerHeaders as jest.Mock).mockResolvedValue({ authorization: 'secret' });
   (ToolApproval.request as jest.Mock).mockResolvedValue({ approved: true });
   (MCPClient as jest.Mock).mockImplementation(() => mockClient);
+  mockClient.listTools.mockResolvedValue(server.tools);
   mockClient.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'Sunny' }] });
   await MCPManager.load();
 });
@@ -51,7 +60,9 @@ test('requires approval before sending arguments and returns the remote result',
   expect(result).toBe('Sunny');
   expect(ToolApproval.request).toHaveBeenCalledWith(expect.objectContaining({ payload: { server: 'Weather', tool: 'weather.forecast', arguments: { city: 'Paris' } }, streamEmitter: stream }));
   expect(mockClient.callTool).toHaveBeenCalledWith('weather.forecast', { city: 'Paris' }, undefined);
-  expect(mockClient.close).toHaveBeenCalled();
+  expect(mockClient.close).not.toHaveBeenCalled();
+  await MCPManager.tools[0].execute('{"city":"Paris"}', stream, {});
+  expect(MCPClient).toHaveBeenCalledTimes(1);
 });
 
 test('rejection does not contact the remote server', async () => {
@@ -85,12 +96,18 @@ test.each(['null', '[]', 'invalid json'])('invalid arguments %s never reach the 
   expect(MCPClient).not.toHaveBeenCalled();
 });
 
-test('preserves cancellation and closes the session on a failed tool call', async () => {
+test('preserves cancellation and keeps the MCP session', async () => {
   const error = new Error('cancelled');
   error.name = 'AbortError';
   mockClient.callTool.mockRejectedValueOnce(error);
   await expect(MCPManager.tools[0].execute('{}', jest.fn(), {})).rejects.toBe(error);
-  expect(mockClient.close).toHaveBeenCalled();
+  expect(mockClient.close).not.toHaveBeenCalled();
+});
+
+test('a disabled tool is omitted from chat', async () => {
+  (listServers as jest.Mock).mockResolvedValue([{ ...server, tools: [{ ...server.tools[0], enabled: false }] }]);
+  await MCPManager.load();
+  expect(MCPManager.tools).toEqual([]);
 });
 
 test('unattended jobs cannot silently approve remote tools', async () => {

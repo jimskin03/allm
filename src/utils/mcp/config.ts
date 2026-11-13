@@ -1,9 +1,10 @@
 import * as Keychain from 'react-native-keychain';
 import uiStore from '@/store/UIStore';
-import { type MCPServer } from './types';
+import { serverTransport, type MCPOAuthState, type MCPServer } from './types';
 import { toolPrefix } from './toolNames';
 
 const serviceFor = (id: string) => `com.anythingllm.mcp.${id}`;
+const oauthServiceFor = (id: string) => `com.anythingllm.mcp.oauth.${id}`;
 const RESERVED_HEADERS = new Set(['accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'host', 'content-length']);
 
 export function validateServerUrl(value: string): string {
@@ -50,17 +51,43 @@ export async function getServerHeaders(id: string): Promise<Record<string, strin
   return credentials ? parseHeaders(credentials.password) : {};
 }
 
+export async function getServerOAuth(id: string): Promise<MCPOAuthState | null> {
+  const credentials = await Keychain.getGenericPassword({ service: oauthServiceFor(id) });
+  if (!credentials) return null;
+  try {
+    const parsed = JSON.parse(credentials.password) as MCPOAuthState;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveServerOAuth(id: string, oauth: MCPOAuthState | null): Promise<void> {
+  if (!oauth) {
+    await Keychain.resetGenericPassword({ service: oauthServiceFor(id) });
+    return;
+  }
+  const saved = await Keychain.setGenericPassword('mcp-oauth', JSON.stringify(oauth), {
+    service: oauthServiceFor(id),
+    accessible: Keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+  });
+  if (!saved) throw new Error('Could not save MCP authentication in secure storage.');
+}
+
 export async function saveServer(server: MCPServer, headers: Record<string, string>): Promise<void> {
   if (!server.name.trim()) throw new Error('Enter a name for this MCP server.');
-  const normalized = { ...server, name: server.name.trim(), url: validateServerUrl(server.url) };
+  const normalized = { ...server, name: server.name.trim(), url: validateServerUrl(server.url), transport: serverTransport(server) };
   const checkedHeaders = parseHeaders(JSON.stringify(headers));
   const servers = await listServers();
   const previousHeaders = await getServerHeaders(server.id);
   const previous = servers.find(item => item.id === server.id);
+  const endpointChanged = !!previous && (previous.url !== normalized.url || serverTransport(previous) !== normalized.transport);
   // An edited endpoint must not inherit the previous server's Always approve choices.
-  if (previous && (previous.url !== normalized.url || JSON.stringify(previousHeaders) !== JSON.stringify(checkedHeaders))) {
+  if (previous && (endpointChanged || JSON.stringify(previousHeaders) !== JSON.stringify(checkedHeaders))) {
     await removeToolPreferences(server.id);
   }
+  if (endpointChanged) await saveServerOAuth(server.id, null);
   // Save credentials first: a keychain failure must not publish an unusable connection.
   const saved = await Keychain.setGenericPassword('mcp', JSON.stringify(checkedHeaders), {
     service: serviceFor(server.id),
@@ -82,6 +109,7 @@ export async function removeServer(id: string): Promise<void> {
   const servers = await listServers();
   await removeToolPreferences(id);
   await Keychain.resetGenericPassword({ service: serviceFor(id) });
+  await Keychain.resetGenericPassword({ service: oauthServiceFor(id) });
   await uiStore.setToStorage('mcp_servers', servers.filter(server => server.id !== id));
 }
 
@@ -96,6 +124,7 @@ async function removeToolPreferences(id: string): Promise<void> {
 export async function clearServers(): Promise<void> {
   for (const server of await listServers()) {
     await Keychain.resetGenericPassword({ service: serviceFor(server.id) });
+    await Keychain.resetGenericPassword({ service: oauthServiceFor(server.id) });
   }
   await uiStore.setToStorage('mcp_servers', []);
 }

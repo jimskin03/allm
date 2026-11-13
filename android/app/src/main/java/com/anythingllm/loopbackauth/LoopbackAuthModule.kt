@@ -29,16 +29,19 @@ import kotlin.concurrent.thread
  *  2. open the authorize URL in a Custom Tab
  *  3. resolve with the full callback URL as soon as the browser hits `callbackPath`, and answer it with a page
  *     that links back into the app (Android 15+ blocks us from bringing the app forward ourselves)
- * Closing the Custom Tab before the callback arrives rejects with `cancelled`.
- * The OAuth logic itself (PKCE, state, token exchange) stays in JS - see src/utils/chatgpt/auth.ts.
+ * MCP sign-in needs the port before dynamic client registration, so it calls `bind` and then `launch`
+ * instead of `authorize`. Closing the Custom Tab before the callback arrives rejects with `cancelled`.
+ * The OAuth logic itself (PKCE, state, token exchange) stays in JS.
  */
 class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext), LifecycleEventListener {
 
-    private class Session(val server: ServerSocket, val promise: Promise) {
+    private class Session(val server: ServerSocket, val callbackPath: String) {
         @Volatile var settled = false
         /** The Custom Tab is up and our activity was paused behind it. */
         @Volatile var leftApp = false
+        /** Set by authorize() or launch(). bind() resolves its own promise with the port first. */
+        @Volatile var promise: Promise? = null
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -58,31 +61,67 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun authorize(url: String, callbackPath: String, timeoutMs: Double, promise: Promise) {
-        session?.let { finish(it, null, "cancelled", "Superseded by a new sign in.") }
-
-        val activity = reactContext.currentActivity
-        if (activity == null) {
+        if (reactContext.currentActivity == null) {
             promise.reject("no_activity", "The app is not in the foreground.")
             return
         }
+        val current = listen(callbackPath, promise) ?: return
+        current.promise = promise
+        armTimeout(current, timeoutMs)
+        openBrowser(url.replace(PORT_PLACEHOLDER, current.server.localPort.toString()), current)
+    }
 
+    /** Starts the loopback listener and resolves with the OS-assigned port. Does not open a browser. */
+    @ReactMethod
+    fun bind(callbackPath: String, promise: Promise) {
+        val current = listen(callbackPath, promise) ?: return
+        promise.resolve(current.server.localPort)
+    }
+
+    /** Opens the authorize URL for a listener started with bind(), and resolves with the callback URL. */
+    @ReactMethod
+    fun launch(url: String, timeoutMs: Double, promise: Promise) {
+        val current = session
+        if (current == null || current.settled) {
+            promise.reject("no_session", "Start the sign in listener before opening the browser.")
+            return
+        }
+        if (current.promise != null) {
+            promise.reject("busy", "A sign in is already waiting for the browser.")
+            return
+        }
+        current.promise = promise
+        armTimeout(current, timeoutMs)
+        openBrowser(url.replace(PORT_PLACEHOLDER, current.server.localPort.toString()), current)
+    }
+
+    private fun listen(callbackPath: String, promise: Promise): Session? {
+        session?.let { finish(it, null, "cancelled", "Superseded by a new sign in.") }
         val server = try {
             ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))
         } catch (e: IOException) {
             promise.reject("listen_failed", "Could not start the sign in listener.", e)
+            return null
+        }
+        val current = Session(server, callbackPath)
+        session = current
+        thread(name = "LoopbackAuth", isDaemon = true) { serve(current) }
+        return current
+    }
+
+    private fun armTimeout(current: Session, timeoutMs: Double) {
+        mainHandler.postDelayed({ finish(current, null, "timeout", "Sign in timed out.") }, timeoutMs.toLong())
+    }
+
+    private fun openBrowser(url: String, current: Session) {
+        val activity = reactContext.currentActivity
+        if (activity == null) {
+            finish(current, null, "no_activity", "The app is not in the foreground.")
             return
         }
-
-        val current = Session(server, promise)
-        session = current
-        val port = server.localPort
-        thread(name = "LoopbackAuth", isDaemon = true) { serve(current, port, callbackPath) }
-        mainHandler.postDelayed({ finish(current, null, "timeout", "Sign in timed out.") }, timeoutMs.toLong())
-
-        val authUrl = url.replace(PORT_PLACEHOLDER, port.toString())
         activity.runOnUiThread {
             try {
-                CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(activity, Uri.parse(authUrl))
+                CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(activity, Uri.parse(url))
             } catch (e: ActivityNotFoundException) {
                 finish(current, null, "no_browser", "No browser is available to sign in.")
             }
@@ -95,7 +134,9 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
     }
 
     /** Accepts connections until the callback arrives. Anything else (eg: /favicon.ico) gets a 404. */
-    private fun serve(current: Session, port: Int, callbackPath: String) {
+    private fun serve(current: Session) {
+        val port = current.server.localPort
+        val callbackPath = current.callbackPath
         while (!current.settled) {
             val socket: Socket = try {
                 current.server.accept()
@@ -174,8 +215,9 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
         }
         if (session === current) session = null
         try { current.server.close() } catch (_: IOException) {}
-        if (callbackUrl != null) current.promise.resolve(callbackUrl)
-        else current.promise.reject(code ?: "error", message ?: "Sign in failed.")
+        val pending = current.promise
+        if (callbackUrl != null) pending?.resolve(callbackUrl)
+        else pending?.reject(code ?: "error", message ?: "Sign in failed.")
     }
 
     override fun onHostPause() {
