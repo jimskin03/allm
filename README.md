@@ -169,7 +169,7 @@ Basically imagine Openclaw or Heremes agent, but fully on-device first, with all
 3. If required, add authentication headers as JSON: `{"Authorization":"Bearer your-token"}`. Headers and OAuth tokens are saved in the device keychain, separately from connection metadata.
 4. Tap **Connect and save** to test the connection and discover its tools. If the server requires OAuth, tap **Sign in**. The app registers a loopback redirect, opens the browser, and keeps the session for later tool calls.
 5. Use **Import JSON** to paste a `mcpServers` document. Entries that only launch a local command are skipped.
-6. Use the tools in chat. Switch individual tools off on the server card or under **Chat > Tools > App connections**. Each remote call uses the existing approval card; **Always approve** can be revoked under **Settings > Tool auto-approvals**.
+6. Use the tools in chat. Switch individual functions on or off from the server's **Edit** screen. They are not listed under **Chat > Tools**. Each remote call uses the existing approval card; **Always approve** can be revoked under **Settings > Tool auto-approvals**.
 
 Use **Edit / refresh tools** or pull to refresh to update a server's discovered tools. A tool you switched off stays off across that refresh. Disabling a server removes all its tools from chat. Deleting it removes its credentials and tool preferences.
 

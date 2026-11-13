@@ -165,7 +165,16 @@ class ToolsManager {
         ...(Platform.OS === 'android' ? [Tools.appConnections.setReminder] : []),
     ]
 
+    /** Tools the chat sheet and the scheduled-job picker can switch. */
     get configurableTools(): ToolManagerTool[] {
+        return this.builtInTools;
+    }
+
+    /**
+     * Built-in tools plus MCP functions that MCP settings currently offer.
+     * A function switched off on its MCP server is already omitted by `MCPManager.tools`.
+     */
+    private get runtimeTools(): ToolManagerTool[] {
         return [...this.builtInTools, ...MCPManager.tools];
     }
 
@@ -176,6 +185,8 @@ class ToolsManager {
     constructor() {
         if (ToolsManager.instance) return ToolsManager.instance;
         ToolsManager.instance = this;
+        // MCP settings and session sync write `mcp_servers`. Drop the cached tool list so chat follows them.
+        uiStore.emitter.addListener('mcp_servers', () => this.resetTools());
     }
 
     resetTools() {
@@ -192,20 +203,23 @@ class ToolsManager {
         const userSettings = await uiStore.getFromStorage('tools', {});
         const onDevice = await isOnDeviceProvider();
         let enabledTools: ToolManagerTool[] = [];
-        for (const tool of this.configurableTools) {
-            // Some tools cannot run on the on-device provider regardless of the user's toggle
+        const offer = (tool: ToolManagerTool) => {
             if (onDevice && !toolSupportsProvider(tool, 'native')) {
                 this.log(`ToolsManager::getTools: Skipping ${tool.id} - not supported by the on-device provider`);
-                continue;
+                return;
             }
+            enabledTools.push(tool);
+        };
+        for (const tool of this.builtInTools) {
             // If the tool is not a key in the user settings, and it is default enabled, add it to the enabled tools
-            if (!userSettings.hasOwnProperty(tool.id) && tool.defaultEnabled) {
-                enabledTools.push(tool);
+            if (!Object.prototype.hasOwnProperty.call(userSettings, tool.id) && tool.defaultEnabled) {
+                offer(tool);
                 continue;
             }
-
-            if (userSettings[tool.id]) enabledTools.push(tool);
+            if (userSettings[tool.id]) offer(tool);
         }
+        // MCP functions follow Settings > MCP servers. The chat tools sheet does not switch them.
+        for (const tool of MCPManager.tools) offer(tool);
         return enabledTools;
     }
 
@@ -215,17 +229,17 @@ class ToolsManager {
      */
     getToolsByIds(ids: string[]): ToolManagerTool[] {
         const wanted = new Set(ids);
-        return this.configurableTools.filter(tool => wanted.has(tool.id));
+        return this.runtimeTools.filter(tool => wanted.has(tool.id));
     }
 
     /** The translated name of the tool behind a function name (eg: an approval request's `skillName`) - falls back to the function name */
     displayNameFor(functionName: string): string {
-        return this.configurableTools.find(tool => tool.definition.function.name === functionName)?.name ?? functionName;
+        return this.runtimeTools.find(tool => tool.definition.function.name === functionName)?.name ?? functionName;
     }
 
     /** Tools a scheduled job may be given - everything not flagged `hiddenFromScheduledJobs` */
     get scheduledJobEligibleTools(): ToolManagerTool[] {
-        return this.configurableTools.filter(tool => !tool.hiddenFromScheduledJobs);
+        return this.runtimeTools.filter(tool => !tool.hiddenFromScheduledJobs);
     }
 
     /**
