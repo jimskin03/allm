@@ -68,6 +68,27 @@
     "changed": "Sprache zu {{language}} geändert"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_one": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "LLM-Voreinstellung",
       "description": "Dies ist die LLM-Voreinstellung, die für alle Workspaces verwendet wird. Sie können zu einem anderen LLM-Anbieter oder einem lokalen Modell wechseln."

@@ -11,6 +11,7 @@ export type StorageKeys =
   'onboarding_data_handling_completed' |
   'llmPreference' |
   'tools' |
+  'mcp_servers' |
   'current_anythingllm_external_connection' |
   'anythingllm_external_connections' |
   'hf_imported_models' |
@@ -62,6 +63,7 @@ export class UIStore {
     'onboarding_data_handling_completed',
     'llmPreference',
     'tools',
+    'mcp_servers',
     'current_anythingllm_external_connection',
     'anythingllm_external_connections',
     'hf_imported_models',

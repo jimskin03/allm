@@ -123,6 +123,7 @@ Basically imagine Openclaw or Heremes agent, but fully on-device first, with all
 - 🎙️ **Voice input** - Tap the mic and talk. Speech-to-text uses your phone's native recognition and keeps up with natural pauses.
 - 🧠 **Memory** - A basic manually managed memory system, globally or per workspace, and recalls it when relevant.
 - 🛠️ **Built-in tools** - Web search, web page reading, summarization, location, time, calendar reading and creation, drafting emails or texts, creating files and scheduling jobs. Smart tool selection picks the right one so small models keep a workable context window.
+- 🔌 **MCP servers** - Connect remote Streamable HTTP MCP servers from Settings, discover their tools, and use them in chat with approval controls and securely stored authentication headers.
 - 📎 **Documents** - Attach PDFs, Word, Excel, PowerPoint, text and more. On-device models retrieve the relevant passages with on device embedding and reranking for a local vector database.
 - 📄 **Create documents** - Generate Word, PDF, PowerPoint and text files from a conversation.
 - 💾 **Chat export** - PDF (images included), Markdown, JSON, or plain text.
@@ -160,6 +161,20 @@ Basically imagine Openclaw or Heremes agent, but fully on-device first, with all
 
 - [x] Android
 - [ ] iOS
+
+### Connecting an MCP server
+
+1. Open **Settings > MCP servers > Add MCP server**.
+2. Enter a name and the server's Streamable HTTP endpoint, for example `https://your-server.example/mcp`.
+3. If required, add authentication headers as JSON: `{"Authorization":"Bearer your-token"}`. Headers are saved in the device keychain, separately from connection metadata.
+4. Tap **Connect and save** to test the connection and discover its tools.
+5. Use the tools in chat. Individual tools can be switched off under **Chat > Tools > App connections**. Each remote call uses the existing approval card; **Always approve** can be revoked under **Settings > Tool auto-approvals**.
+
+Use **Edit / refresh tools** and **Connect and save** to update a server's discovered tools. Disabling a server removes all its tools from chat. Deleting it removes its credentials and tool preferences.
+
+Supports JSON and SSE responses over [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), including session and protocol negotiation, paginated discovery, and cancellation. On-device models need a template that supports tool calling. MCP tools apply to chats handled on the phone, using on-device or external model providers; chats forwarded to an AnythingLLM instance use that instance's tools.
+
+Local `stdio` command servers, the legacy HTTP+SSE transport, browser OAuth, MCP resources/prompts, binary result rendering, resumable SSE reconnection, and unattended scheduled MCP calls are not supported. Use an HTTP bridge for command-based servers. For a server on another computer, use its LAN address reachable from your phone rather than `localhost`.
 
 ## 🛠️ Development
 

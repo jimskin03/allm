@@ -68,6 +68,27 @@
     "changed": "भाषा बदल गई {{language}} में"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_one": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "LLM प्राथमिकता",
       "description": "यह LLM प्राथमिकता सभी कार्यक्षेत्रों के लिए उपयोग की जाएगी। आप इसे किसी भिन्न LLM प्रदाता या ऑन-डिवाइस मॉडल का उपयोग करने के लिए बदल सकते हैं।"

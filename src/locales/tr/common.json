@@ -68,6 +68,27 @@
     "changed": "Dil {{language}} olarak değiştirildi"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_one": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "LLM Tercihi",
       "description": "Bu, tüm çalışma alanları için kullanılacak LLM tercihidir. Farklı bir LLM sağlayıcısı veya cihazda çalışan modeli kullanmak için değiştirebilirsiniz."

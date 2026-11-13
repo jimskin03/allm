@@ -15,6 +15,7 @@ import {
   Sparkle,
   TextAa,
   Translate,
+  Plugs,
 } from 'phosphor-react-native';
 import { useTranslation } from 'react-i18next';
 import i18n, { LANGUAGES, currentLanguage, tKey } from '@/i18n';
@@ -44,6 +45,9 @@ import ApkVersion from './ApkVersion';
 import DeviceInfo from 'react-native-device-info';
 import { getChangelogForVersion } from '@/utils/changelog';
 import ChangelogModal from '@/components/ChangelogModal';
+import { clearServers } from '@/utils/mcp/config';
+import MCPManager from '@/utils/mcp';
+import ToolsManager from '@/utils/ToolsManager';
 
 interface MainViewProps {
   goToPage: (page: IWorkspacePageKey) => void;
@@ -142,9 +146,12 @@ export function MainView({ goToPage }: MainViewProps) {
       ScheduledJob.deleteAll(),
       uninstallAllModels(),
       deleteAllAppFiles(),
+      clearServers(),
     ]);
     await syncNativeSchedule();
     await uiStore.resetAllStorage();
+    await MCPManager.load();
+    ToolsManager.resetTools();
     uiStore.emitter.emit(uiStore.globalEvents.ONBOARDING_RESET);
     // Defer navigation reset to the next frame so the component tree
     // re-renders with onboarding screens registered in the navigator.
@@ -322,6 +329,11 @@ export function MainView({ goToPage }: MainViewProps) {
                 icon={<Translate size={18} color="#FFF" />}
                 value={activeLanguage?.nativeName}
                 onPress={() => goToPage('language')}
+              />
+              <SupportItem
+                title={t('settings.mcp.title')}
+                icon={<Plugs size={18} color="#FFF" />}
+                onPress={() => goToPage('mcp_servers')}
               />
               <SupportItem
                 title={t('settings.utility.tool_auto_approvals')}

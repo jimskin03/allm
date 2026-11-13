@@ -12,6 +12,7 @@ import ToolsManager, { TOOL_GROUPS, toolSupportsProvider, type ToolGroup, type T
 import { showToast } from "@/utils/Notification";
 import Telemetry from "@/utils/Telemetry";
 import { useTranslation } from "react-i18next";
+import MCPManager from "@/utils/mcp";
 
 type ToolsPage = 'menu' | ToolGroupId;
 
@@ -52,6 +53,7 @@ export default function ToolsActionSheet() {
     };
 
     const loadTools = async () => {
+        await MCPManager.load();
         const updates: Record<string, boolean> = {};
         for (const tool of ToolsManager.configurableTools) updates[tool.id] = tool.defaultEnabled;
         const storedToolSettings: Record<string, boolean> = await uiStore.getFromStorage('tools', {});
@@ -65,6 +67,11 @@ export default function ToolsActionSheet() {
 
     useEffect(() => {
         loadTools();
+        const subscription = uiStore.emitter.addListener('mcp_servers', () => {
+            ToolsManager.resetTools();
+            loadTools();
+        });
+        return () => subscription.remove();
     }, []);
 
     const handleDismiss = () => {
