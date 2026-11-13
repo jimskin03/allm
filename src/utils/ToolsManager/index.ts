@@ -11,6 +11,7 @@ import { truncateMiddle } from "../chat/contextCompaction";
 import { isOnDeviceProvider, toolSupportsProvider } from "./providerGuards";
 import i18n from "@/i18n";
 import { Platform } from "react-native";
+import MCPManager from "@/utils/mcp";
 
 export { isOnDeviceProvider, isOnDeviceProviderName, toolSupportsProvider } from "./providerGuards";
 
@@ -145,7 +146,7 @@ class ToolsManager {
     static instance: ToolsManager;
     private _tools: ToolManagerTool[] | null = null;
 
-    configurableTools: ToolManagerTool[] = [
+    private builtInTools: ToolManagerTool[] = [
         Tools.default.webSearch,
         Tools.default.webScraping,
         Tools.default.getLocation,
@@ -163,6 +164,10 @@ class ToolsManager {
         // Hands off to the clock app, which only Android has
         ...(Platform.OS === 'android' ? [Tools.appConnections.setReminder] : []),
     ]
+
+    get configurableTools(): ToolManagerTool[] {
+        return [...this.builtInTools, ...MCPManager.tools];
+    }
 
     log = (text: string, ...args: any[]) => {
         console.log(`\x1b[35m[ToolsManager] ${text}\x1b[0m`, ...args);
@@ -182,6 +187,8 @@ class ToolsManager {
      * in the raw format that the ToolsManager uses - should not be used directly for LLM function calling
      */
     async getTools(): Promise<ToolManagerTool[]> {
+        try { await MCPManager.load(); }
+        catch (error) { this.log('Could not load MCP server settings', error); }
         const userSettings = await uiStore.getFromStorage('tools', {});
         const onDevice = await isOnDeviceProvider();
         let enabledTools: ToolManagerTool[] = [];

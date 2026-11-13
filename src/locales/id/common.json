@@ -68,6 +68,26 @@
     "changed": "Bahasa diubah ke {{language}}"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "Preferensi LLM",
       "description": "Ini adalah preferensi LLM yang akan digunakan untuk semua ruang kerja. Anda dapat mengubahnya untuk menggunakan penyedia LLM atau model on-device yang berbeda."

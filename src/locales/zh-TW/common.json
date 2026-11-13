@@ -68,6 +68,26 @@
     "changed": "語言已變更為 {{language}}"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "LLM 偏好設定",
       "description": "這是將用於所有工作區的 LLM 偏好設定。您可以變更為使用其他 LLM 提供者或裝置上的模型。"

@@ -68,6 +68,26 @@
     "changed": "언어가 {{language}}(으)로 변경됨"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "LLM 선호",
       "description": "이는 모든 워크스페이스에서 사용될 LLM 선호입니다. 다양한 LLM 제공자 또는 온디바이스 모델을 사용하도록 변경할 수 있습니다."

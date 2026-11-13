@@ -68,6 +68,28 @@
     "changed": "Idioma cambiado a {{language}}"
   },
   "settings": {
+    "mcp": {
+      "title": null,
+      "description": null,
+      "name": null,
+      "name_required": null,
+      "url": null,
+      "headers": null,
+      "headers_hint": null,
+      "connect_save": null,
+      "empty": null,
+      "add": null,
+      "edit_refresh": null,
+      "tool_count_many": null,
+      "tool_count_one": null,
+      "tool_count_other": null,
+      "enable_server": null,
+      "tools_hint": null,
+      "remove_title": null,
+      "remove_message": null,
+      "failed": null,
+      "approval": null
+    },
     "llm_preference": {
       "title": "Preferencia de LLM",
       "description": "Esta es la preferencia de LLM que se utilizará para todos los espacios de trabajo. Puede cambiarla para usar un proveedor de LLM diferente o un modelo local."

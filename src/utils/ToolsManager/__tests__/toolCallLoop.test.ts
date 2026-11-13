@@ -3,6 +3,7 @@ jest.mock('@/utils/Telemetry', () => ({ __esModule: true, default: { logEvent: j
 jest.mock('@/i18n', () => ({ __esModule: true, default: { t: (key: string) => key } }));
 jest.mock('../tools', () => ({ __esModule: true, default: { default: {}, createFiles: {}, appConnections: {}, calendar: {} } }));
 jest.mock('../toolReranker', () => ({ __esModule: true, default: class {} }));
+jest.mock('@/utils/mcp', () => ({ __esModule: true, default: { tools: [], load: jest.fn() } }));
 jest.mock('../../chat/contextCompaction', () => ({ truncateMiddle: (text: string) => text }));
 jest.mock('../../constants', () => ({ generateUUID: () => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
 
