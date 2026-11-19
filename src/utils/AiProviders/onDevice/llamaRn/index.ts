@@ -17,6 +17,7 @@ import ContextCompactor, { type CompactionChatMessage, truncateMiddle } from '@/
 import { throwIfAborted } from '@/utils/chat/abort';
 import { ChatMemoryEstimate, enableAllocationLogging, estimateChatMemory, readGgufShape } from '@/utils/models/memoryEstimate';
 import Telemetry from '@/utils/Telemetry';
+import { grammarSafeTools } from './grammarSafeTools';
 
 export type NativeLlamaChatMessage = {
   role: string;
@@ -25,6 +26,17 @@ export type NativeLlamaChatMessage = {
 };
 
 export type ILlamaRnStreamCallback = (token: string) => void;
+
+function textContent(message: NativeLlamaChatMessage | undefined): string | null {
+  if (!message) return null;
+  if (typeof message.content === 'string') return message.content;
+  if (!Array.isArray(message.content)) return null;
+  const text = message.content
+    .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part: any) => part.text)
+    .join('\n');
+  return text.length ? text : null;
+}
 
 export type OnDeviceRuntimeInfo = {
   runtime: 'llama.rn';
@@ -50,9 +62,11 @@ export default class LlamaRnWrapper {
    * Context length default is shared with `Workspace` so inference behaves the same when a workspace has no override.
    * Keeping inside the window, in order:
    *  1. `OnDeviceProvider.shapePrompt` swaps the oldest chats for a rolling summary (`compactor`) and caps RAG chunks.
-   *  2. `fitMessagesToContext` drops the oldest remaining turns, then shrinks the latest message if it alone overflows.
-   *  3. `runCompletion` sizes `n_predict` to the room actually left so the reply ends cleanly instead of shifting.
-   *  4. llama.cpp context shifting stays on as a last line of defence.
+   *  2. Tool schemas are reduced to a fragment llama.cpp can compile, then tools are dropped until the prompt fits.
+   *  3. `fitMessagesToContext` drops the oldest remaining turns, then shrinks the latest message if it alone overflows.
+   *  4. `runCompletion` sizes `n_predict` to the room actually left so the reply ends cleanly.
+   *  5. A prompt that still fills the window is shortened again. With a vision projector loaded, llama.cpp
+   *     reports "Context is full" when the prompt already uses the whole window.
    */
   /** Scales with device RAM up to a max of 2048 - see src/utils/contextLength.ts */
   static get DEFAULT_CONTEXT_LENGTH(): number {
@@ -527,10 +541,16 @@ export default class LlamaRnWrapper {
    * Drops the oldest chat turns until the rendered prompt leaves room for a response.
    * The system prompt (index 0) and the latest user message are always kept.
    * Returns the (possibly trimmed) messages and how many tokens they render to.
+   * `ceiling` replaces the normal prompt budget when the prompt has to get under a hard token count.
    */
-  async fitMessagesToContext(messages: NativeLlamaChatMessage[], tools?: any[]): Promise<{ messages: NativeLlamaChatMessage[]; promptTokens: number; dropped: number }> {
+  async fitMessagesToContext(
+    messages: NativeLlamaChatMessage[],
+    tools?: any[],
+    options?: { ceiling?: number; minChars?: number; truncateSystem?: boolean },
+  ): Promise<{ messages: NativeLlamaChatMessage[]; promptTokens: number; dropped: number }> {
     const nCtx = this.contextLength;
-    const budget = this.promptBudget;
+    const budget = options?.ceiling ?? this.promptBudget;
+    const floor = options?.minChars ?? LlamaRnWrapper.MIN_TRUNCATED_MESSAGE_CHARS;
 
     let working = [...messages];
     let dropped = 0;
@@ -547,25 +567,66 @@ export default class LlamaRnWrapper {
     }
 
     if (dropped) this.log(`Dropped ${dropped} oldest message(s) to fit ${nCtx} token context (prompt now ${promptTokens} tokens, budget ${budget})`);
-    // Nothing left to drop but still over budget: the latest message itself (a long prompt, or a
-    // user message with tool results merged in) is the culprit. Shrink it rather than let
-    // llama.cpp's context shift evict the system prompt mid-generation.
-    if (promptTokens > budget) {
-      const lastIndex = working.length - 1;
-      const original = working[lastIndex];
-      const content = typeof original?.content === 'string' ? original.content : null;
-      if (content && content.length > LlamaRnWrapper.MIN_TRUNCATED_MESSAGE_CHARS) {
-        let maxChars = Math.floor(content.length * 0.75);
-        while (promptTokens > budget && maxChars >= LlamaRnWrapper.MIN_TRUNCATED_MESSAGE_CHARS) {
-          working[lastIndex] = { ...original, content: truncateMiddle(content, maxChars) } as NativeLlamaChatMessage;
-          promptTokens = await this.countPromptTokens(working, tools);
-          maxChars = Math.floor(maxChars * 0.75);
-        }
-        this.log(`Truncated the latest message from ${content.length} to ${String(working[lastIndex].content).length} chars to fit the ${budget} token budget (prompt now ${promptTokens} tokens)`);
+
+    const shrinkAt = async (index: number) => {
+      const original = working[index];
+      const content = textContent(original);
+      if (!content || content.length <= floor) return;
+      let maxChars = Math.floor(content.length * 0.75);
+      while (promptTokens > budget && maxChars >= floor) {
+        working[index] = { ...original, content: truncateMiddle(content, maxChars) };
+        promptTokens = await this.countPromptTokens(working, tools);
+        maxChars = Math.floor(maxChars * 0.75);
       }
-      if (promptTokens > budget) this.log(`Prompt is ${promptTokens} tokens which exceeds the ${budget} token budget even after trimming - relying on context shifting.`);
-    }
+      this.log(`Truncated message ${index} from ${content.length} to ${String(working[index].content).length} chars to fit the ${budget} token budget (prompt now ${promptTokens} tokens)`);
+    };
+
+    // Nothing left to drop but still over budget: the latest message itself (a long prompt, or a
+    // user message with tool results merged in) is the culprit. Shrink it so the system prompt stays.
+    if (promptTokens > budget && working.length) await shrinkAt(working.length - 1);
+    if (promptTokens > budget && options?.truncateSystem && working[0]?.role === 'system') await shrinkAt(0);
+    if (promptTokens > budget) this.log(`Prompt is ${promptTokens} tokens which exceeds the ${budget} token budget even after trimming.`);
     return { messages: working, promptTokens, dropped };
+  }
+
+  /**
+   * Tokens the rendered prompt must stay under. llama.cpp throws "Context is full" once the
+   * prompt uses the whole window and context shifting is off (vision projector loaded).
+   */
+  private get promptWindowLimit(): number {
+    return this.contextLength - LlamaRnWrapper.CONTEXT_SAFETY_MARGIN;
+  }
+
+  /**
+   * Fits `messages` with as many of `tools` as the window allows. Tools are already in rerank
+   * order, so the ones at the end go first. A prompt that still fills the window is shortened
+   * with no tools attached.
+   */
+  private async preparePrompt(messages: NativeLlamaChatMessage[], tools: any[] | undefined, signal?: AbortSignal | null) {
+    let active = tools?.length ? tools : undefined;
+    let fitted = await this.fitMessagesToContext(messages, active);
+    const limit = this.promptWindowLimit;
+    if (active && fitted.promptTokens >= limit) {
+      const started = active.length;
+      while (active.length && fitted.promptTokens >= limit) {
+        throwIfAborted(signal);
+        active = active.slice(0, -1);
+        fitted = await this.fitMessagesToContext(messages, active.length ? active : undefined);
+      }
+      this.log(`Dropped ${started - active.length} tool(s) so the prompt fits the ${this.contextLength} token window (prompt now ${fitted.promptTokens} tokens)`);
+      if (!active.length) active = undefined;
+    }
+    if (fitted.promptTokens >= limit) {
+      throwIfAborted(signal);
+      fitted = await this.fitMessagesToContext(messages, undefined, {
+        ceiling: Math.max(32, limit - LlamaRnWrapper.MIN_N_PREDICT),
+        minChars: 32,
+        truncateSystem: true,
+      });
+      active = undefined;
+      this.log(`Shortened the prompt to ${fitted.promptTokens} tokens to fit the ${this.contextLength} token window`);
+    }
+    return { messages: fitted.messages, promptTokens: fitted.promptTokens, tools: active };
   }
 
   private toCompleteResponse(result: NativeCompletionResult & { cappedByContext?: boolean }): ICompleteResponse {
@@ -614,7 +675,7 @@ export default class LlamaRnWrapper {
     availableTools: any[],
     onToken: ((data: TokenData) => void) | undefined,
     signal: AbortSignal | null | undefined,
-    options: { nPredict?: number },
+    options: { nPredict?: number; retried?: boolean },
   ): Promise<NativeCompletionResult & { cappedByContext: boolean }> {
     this.keepAlive();
     throwIfAborted(signal); // may have been stopped while queued behind another round
@@ -625,17 +686,31 @@ export default class LlamaRnWrapper {
     if (!this.context) await this.initialize();
     if (!this.context) throw new Error('LlamaRnWrapper::runCompletion: Model not initialized');
 
-    const useTools = this.supportsNativeToolCalling && availableTools.length > 0;
-    if (availableTools.length && !useTools) this.log(`Model template has no tool support - ${availableTools.length} tool(s) will not be offered.`);
+    const nativeTools = this.supportsNativeToolCalling && availableTools.length > 0;
+    if (availableTools.length && !nativeTools) this.log(`Model template has no tool support - ${availableTools.length} tool(s) will not be offered.`);
+    const safeTools = nativeTools ? grammarSafeTools(availableTools) : [];
+    if (nativeTools && availableTools.length > safeTools.length) {
+      this.log(`Offering ${safeTools.length} of ${availableTools.length} tools so llama.cpp can compile the tool grammar.`);
+    }
 
-    const tools = useTools ? availableTools : undefined;
-    const { messages: fitted, promptTokens } = await this.fitMessagesToContext(this.dropUnsupportedMedia(messages), tools);
+    const prepared = await this.preparePrompt(this.dropUnsupportedMedia(messages), safeTools.length ? safeTools : undefined, signal);
+    const { messages: fitted, promptTokens, tools } = prepared;
 
-    // Ask for no more tokens than the window has left so the reply ends cleanly (stopped_limit)
+    // Ask for no more tokens than the window has left so the reply ends on stopped_limit
     // instead of llama.cpp shifting the KV cache and evicting the start of the prompt.
     const requestedPredict = options.nPredict ?? this.nPredict;
     const room = this.contextLength - promptTokens - LlamaRnWrapper.CONTEXT_SAFETY_MARGIN;
-    const nPredict = Math.max(LlamaRnWrapper.MIN_N_PREDICT, Math.min(requestedPredict, room));
+    if (room < 1) {
+      if (options.retried) throw new Error('Context is full');
+      this.log(`Prompt is ${promptTokens} tokens in a ${this.contextLength} token window - retrying shorter, without tools`);
+      const shrunk = await this.fitMessagesToContext(this.dropUnsupportedMedia(messages), undefined, {
+        ceiling: Math.max(32, Math.floor(this.contextLength / 2)),
+        minChars: 32,
+        truncateSystem: true,
+      });
+      return this.runCompletionUnlocked(shrunk.messages, [], onToken, signal, { ...options, retried: true });
+    }
+    const nPredict = Math.min(requestedPredict, room);
     const cappedByContext = nPredict < requestedPredict;
     if (cappedByContext) this.log(`Reply capped at ${nPredict} tokens - prompt uses ${promptTokens} of the ${this.contextLength} token window`);
 
@@ -655,12 +730,28 @@ export default class LlamaRnWrapper {
           jinja: this.context.isJinjaSupported(),
           // Keep <think> blocks inline - the chat UI already extracts them into the thought chain.
           reasoning_format: 'none',
-          ...(useTools ? { tools, tool_choice: 'auto' } : {}),
+          ...(tools?.length ? { tools, tool_choice: 'auto' as const } : {}),
           ...this.completionParams,
         },
         onToken,
       );
       return { ...result, cappedByContext };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const grammarRejected = /failed to parse grammar/i.test(message);
+      const contextFull = /context is full/i.test(message);
+      if (options.retried || (!grammarRejected && !contextFull)) throw error;
+      this.log(grammarRejected
+        ? 'llama.cpp could not build a grammar for the tools - retrying without them'
+        : 'Prompt exceeded the context window - retrying with a shorter prompt and no tools');
+      const retryMessages = contextFull
+        ? (await this.fitMessagesToContext(this.dropUnsupportedMedia(messages), undefined, {
+          ceiling: Math.max(32, Math.floor(this.contextLength / 2)),
+          minChars: 32,
+          truncateSystem: true,
+        })).messages
+        : fitted;
+      return this.runCompletionUnlocked(retryMessages, [], onToken, signal, { ...options, retried: true });
     } finally {
       this.isGenerating = false;
       signal?.removeEventListener('abort', onAbort);
