@@ -280,7 +280,8 @@ const crossPlatformModels: Model[] = [
   // ---------------------------------------------------------------------------
   // Modern small models (Sept 2026).
   // NOTE: Gemma 4, Qwen3.5 and Qwen3-VL need the gemma4 / qwen35 / qwen3vl
-  // architectures which the bundled llama.rn (>= 0.12.9) runtime knows about.
+  // architectures which the bundled llama.rn runtime knows about. 0.13.0-rc.12
+  // (llama.cpp b12445) also loads lfm3 GGUFs; 0.12.9 rejects them at init.
   // Quants were picked to stay phone-sized while keeping quality: Q8_0 for
   // sub-1B models, Q6_K / UD-Q4_K_XL around 2B, Q4_K_M for 3B, and Google's
   // QAT "mobile" Q2_K_XL builds for Gemma 4 (trained for that quant).
