@@ -560,7 +560,7 @@
       "report_github": "Zgłoś na GitHubie",
       "something_went_wrong": "Coś poszło nie tak",
       "reported_automatically": "Ten błąd został zgłoszony do Mintplex Labs automatycznie.",
-      "telemetry_disabled": "Telemetria jest wyłączona, więc nie zgłosiliśmy tego błędu automatycznie do Mintplex Labs. Zamiast tego powinieneś otworzyć problem na GitHubie.",
+      "telemetry_disabled": "Ten błąd zostaje na Twoim urządzeniu. Skopiuj szczegóły lub otwórz problem na GitHubie, jeśli chcesz, żeby został sprawdzony.",
       "go_home": "Przejdź do domu",
       "message_failed": "Tej wiadomości nie można wyświetlić z powodu błędu.",
       "hide_details": "Ukryj szczegóły błędu",

@@ -515,7 +515,7 @@
       "report_github": "在 GitHub 上報告",
       "something_went_wrong": "出現問題",
       "reported_automatically": "此錯誤已自動報告給 Mintplex Labs。",
-      "telemetry_disabled": "您已停用遙測，因此我們未自動向 Mintplex Labs 報告此錯誤，您應該改為提出 GitHub 議題。",
+      "telemetry_disabled": "此錯誤只保留在你的裝置上。複製詳細資料，或在需要查看時提出 GitHub 議題。",
       "go_home": "回首頁",
       "message_failed": "由於發生錯誤，無法顯示此訊息。",
       "hide_details": "隱藏錯誤詳細資訊",

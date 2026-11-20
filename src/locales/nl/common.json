@@ -530,7 +530,7 @@
       "report_github": "Rapporteer op GitHub",
       "something_went_wrong": "Er is iets misgegaan",
       "reported_automatically": "Deze fout werd automatisch gerapporteerd aan Mintplex Labs.",
-      "telemetry_disabled": "Je hebt telemetrie uitgeschakeld, dus we hebben deze fout niet automatisch gerapporteerd aan Mintplex Labs. Je moet in plaats daarvan een GitHub-probleem openen.",
+      "telemetry_disabled": "Deze fout blijft op je apparaat. Kopieer de details of open een GitHub-probleem als je wilt dat ernaar gekeken wordt.",
       "go_home": "Ga naar startpagina",
       "message_failed": "Dit bericht kon niet worden weergegeven vanwege een fout.",
       "hide_details": "Verberg foutgegevens",

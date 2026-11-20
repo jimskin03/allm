@@ -530,7 +530,7 @@
       "report_github": "Auf GitHub melden",
       "something_went_wrong": "Etwas ist schief gelaufen",
       "reported_automatically": "Dieser Fehler wurde automatisch an Mintplex Labs gemeldet.",
-      "telemetry_disabled": "Sie haben Telemetrie deaktiviert, daher haben wir diesen Fehler nicht automatisch an Mintplex Labs gemeldet. Sie sollten stattdessen ein GitHub-Problem öffnen.",
+      "telemetry_disabled": "Dieser Fehler bleibt auf Ihrem Gerät. Kopieren Sie die Details oder öffnen Sie ein GitHub-Problem, wenn er geprüft werden soll.",
       "go_home": "Zur Startseite",
       "message_failed": "Diese Nachricht konnte aufgrund eines Fehlers nicht angezeigt werden.",
       "hide_details": "Fehlerdetails ausblenden",

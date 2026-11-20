@@ -545,7 +545,7 @@
       "report_github": "Relatar no GitHub",
       "something_went_wrong": "Algo deu errado",
       "reported_automatically": "Este erro foi reportado à Mintplex Labs automaticamente.",
-      "telemetry_disabled": "Você tem telemetria desabilitada, portanto não relatamos automaticamente este erro à Mintplex Labs, você deve abrir uma issue no GitHub.",
+      "telemetry_disabled": "Este erro fica no seu dispositivo. Copie os detalhes ou abra uma issue no GitHub se quiser que ele seja analisado.",
       "go_home": "Ir para Casa",
       "message_failed": "Esta mensagem não pôde ser exibida devido a um erro.",
       "hide_details": "Ocultar detalhes do erro",

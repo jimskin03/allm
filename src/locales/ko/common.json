@@ -515,7 +515,7 @@
       "report_github": "GitHub에 보고",
       "something_went_wrong": "문제가 발생했습니다",
       "reported_automatically": "이 오류는 자동으로 Mintplex Labs에 보고되었습니다.",
-      "telemetry_disabled": "원격 분석이 비활성화되어 있으므로 이 오류를 Mintplex Labs에 자동으로 보고하지 않았습니다. 대신 GitHub 이슈를 열어야 합니다.",
+      "telemetry_disabled": "이 오류는 기기에만 남습니다. 자세한 내용을 복사하거나, 확인을 원하면 GitHub 이슈를 여세요.",
       "go_home": "홈으로 이동",
       "message_failed": "오류로 인해 이 메시지를 표시할 수 없습니다.",
       "hide_details": "오류 세부 정보 숨기기",

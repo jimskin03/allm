@@ -545,7 +545,7 @@
       "report_github": "Signaler sur GitHub",
       "something_went_wrong": "Une erreur s'est produite",
       "reported_automatically": "Cette erreur a été signalée à Mintplex Labs automatiquement.",
-      "telemetry_disabled": "Vous avez désactivé la télémétrie, donc nous n'avons pas signalé automatiquement cette erreur à Mintplex Labs, vous devriez ouvrir un problème GitHub à la place.",
+      "telemetry_disabled": "Cette erreur reste sur votre appareil. Copiez les détails ou ouvrez un problème GitHub si vous voulez qu'elle soit examinée.",
       "go_home": "Aller à l'accueil",
       "message_failed": "Ce message n'a pas pu être affiché en raison d'une erreur.",
       "hide_details": "Masquer les détails de l'erreur",

@@ -515,7 +515,7 @@
       "report_github": "Báo cáo trên GitHub",
       "something_went_wrong": "Có điều gì đó không đúng",
       "reported_automatically": "Lỗi này đã được báo cáo cho Mintplex Labs một cách tự động.",
-      "telemetry_disabled": "Bạn đã tắt viễn cảm, vì vậy chúng tôi không tự động báo cáo lỗi này cho Mintplex Labs, bạn nên mở một vấn đề GitHub thay thế.",
+      "telemetry_disabled": "Lỗi này chỉ nằm trên thiết bị của bạn. Sao chép chi tiết hoặc mở một vấn đề GitHub nếu bạn muốn được xem xét.",
       "go_home": "Về nhà",
       "message_failed": "Tin nhắn này không thể hiển thị do lỗi.",
       "hide_details": "Ẩn chi tiết lỗi",

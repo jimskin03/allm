@@ -6,11 +6,10 @@ import { NavigationProp, useNavigation } from "@react-navigation/native";
 import { PATHS } from "@/utils/paths";
 import uiStore from "@/store/UIStore";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Telemetry from "@/utils/Telemetry";
 import { useTranslation } from "react-i18next";
 import { tKey } from "@/i18n";
 
-// `id` is the value sent to telemetry - only `title` (a translation key) is shown to the user
+// `id` is only the local selection. Nothing about this answer is stored or sent.
 const options = [
   {
     id: 'productivity',
@@ -42,9 +41,7 @@ export default function Survey() {
   const insets = useSafeAreaInsets();
 
   const onContinue = async () => {
-    console.log("Stubbed: Sending survey data to server");
     uiStore.setToStorage('onboarding_survey_completed', true);
-    Telemetry.logEvent(Telemetry.CUSTOM_EVENTS.ONBOARDING.SURVEY_RESPONSE, { selection });
     navigation.navigate(PATHS.onboarding.data_handling as never)
   }
 

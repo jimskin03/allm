@@ -515,7 +515,7 @@
       "report_github": "GitHubで報告",
       "something_went_wrong": "問題が発生しました",
       "reported_automatically": "このエラーはMintplex Labsに自動的に報告されました。",
-      "telemetry_disabled": "テレメトリが無効になっているため、このエラーをMintplex Labsに自動報告しませんでした。代わりにGitHubで問題を開いてください。",
+      "telemetry_disabled": "このエラーは端末内に残ります。詳細をコピーするか、確認してほしい場合は GitHub で問題を開いてください。",
       "go_home": "ホームに移動",
       "message_failed": "エラーのためこのメッセージを表示できませんでした。",
       "hide_details": "エラーの詳細を非表示",

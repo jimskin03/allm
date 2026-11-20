@@ -530,7 +530,7 @@
       "report_github": "GitHub'da Bildir",
       "something_went_wrong": "Bir şeyler yanlış gitti",
       "reported_automatically": "Bu hata Mintplex Labs'a otomatik olarak bildirildi.",
-      "telemetry_disabled": "Telemetri devre dışı bırakılmış olması nedeniyle, bu hatayı Mintplex Labs'a otomatik olarak bildirmedik, bunun yerine bir GitHub sorunu açmalısınız.",
+      "telemetry_disabled": "Bu hata cihazınızda kalır. Ayrıntıları kopyalayın veya incelenmesini istiyorsanız bir GitHub sorunu açın.",
       "go_home": "Evime Dön",
       "message_failed": "Bu mesaj bir hata nedeniyle gösterilemedi.",
       "hide_details": "Hata detaylarını gizle",

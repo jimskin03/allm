@@ -515,7 +515,7 @@
       "report_github": "Laporkan di GitHub",
       "something_went_wrong": "Ada yang salah",
       "reported_automatically": "Error ini dilaporkan ke Mintplex Labs secara otomatis.",
-      "telemetry_disabled": "Anda telah menonaktifkan telemetri, jadi kami tidak melaporkan error ini secara otomatis ke Mintplex Labs, Anda sebaiknya membuka masalah GitHub.",
+      "telemetry_disabled": "Error ini tetap di perangkat Anda. Salin detailnya atau buka masalah GitHub jika Anda ingin diperiksa.",
       "go_home": "Pergi ke Beranda",
       "message_failed": "Pesan ini tidak dapat ditampilkan karena error.",
       "hide_details": "Sembunyikan detail error",

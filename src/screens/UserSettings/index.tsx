@@ -6,7 +6,6 @@ import { MainView } from './Main';
 import AdvancedModelPreferences from './AdvancedModelPreferences';
 import SpecialTools from './SpecialTools';
 import AssistantSettings from './Assistant';
-import AnonymousTelemetry from './AnonymousTelemetry';
 import LanguageSettings from './Language';
 import ToolAutoApprovals from './ToolAutoApprovals';
 import MCPServers from './MCPServers';
@@ -18,7 +17,6 @@ const PAGES = {
   ),
   special_tools: (props: any) => <SpecialTools {...props} />,
   assistant: (props: any) => <AssistantSettings {...props} />,
-  anonymous_telemetry: (props: any) => <AnonymousTelemetry {...props} />,
   language: (props: any) => <LanguageSettings {...props} />,
   tool_auto_approvals: (props: any) => <ToolAutoApprovals {...props} />,
   mcp_servers: (props: any) => <MCPServers {...props} />,

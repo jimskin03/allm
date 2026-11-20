@@ -8,6 +8,7 @@ const CHANGELOG: ChangelogEntry[] = [
     version: '1.3.2',
     content: [
       '- **Onboarding fix** — if setup was interrupted, the app now picks up where you left off instead of skipping the last step',
+      '- **No data collection** — anonymous telemetry and automatic crash reports are removed. Errors stay on your device',
     ].join('\n'),
   },
   {

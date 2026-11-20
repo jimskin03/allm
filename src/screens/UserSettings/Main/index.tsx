@@ -8,7 +8,6 @@ import {
   RedditLogo,
   FileText,
   FileLock,
-  ChartBar,
   GithubLogo,
   Scroll,
   ShieldCheck,
@@ -339,11 +338,6 @@ export function MainView({ goToPage }: MainViewProps) {
                 title={t('settings.utility.tool_auto_approvals')}
                 icon={<ShieldCheck size={18} color="#FFF" />}
                 onPress={() => goToPage('tool_auto_approvals')}
-              />
-              <SupportItem
-                title={t('settings.utility.anonymous_telemetry')}
-                icon={<ChartBar size={18} color="#FFF" />}
-                onPress={() => goToPage('anonymous_telemetry')}
                 borderBottom={UTILITY_LINKS.length > 0}
               />
               {UTILITY_LINKS.map((link, index) => {
