@@ -38,6 +38,8 @@ export type MCPOAuthState = {
   redirectUri?: string;
   scope?: string;
   resource?: string;
+  /** How the token endpoint expects the client to authenticate. `none` means a public client. */
+  tokenEndpointAuthMethod?: string;
   accessToken?: string;
   refreshToken?: string;
   /** Epoch ms. 0 or omitted means the access token has no known expiry. */

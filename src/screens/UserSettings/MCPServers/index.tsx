@@ -164,7 +164,7 @@ export default function MCPServers({ goToPage }: { goToPage: (page: IWorkspacePa
     setError('');
     try {
       await startMcpAuthorization({ ...server, transport: serverTransport(server) });
-      await mcpSessions.sync({ ...server, transport: serverTransport(server) }).catch(() => {});
+      await mcpSessions.sync({ ...server, transport: serverTransport(server) });
       await refresh();
     } catch (reason) {
       if (!(reason instanceof Error && /cancel/i.test(reason.message))) reportError(reason);

@@ -165,6 +165,7 @@ class MCPSessionStore {
     try {
       await this.connect(server, true);
     } catch {
+      if (mcpStatus.get(id).state === 'needs_authorization') return;
       this.scheduleReconnect(id);
     }
   }

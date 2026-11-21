@@ -7,6 +7,12 @@ import { type MCPOAuthState, type MCPServer } from './types';
 const { LoopbackAuthModule } = NativeModules;
 
 export const MCP_OAUTH_CALLBACK_PATH = '/oauth/callback';
+/**
+ * App redirect. A loopback `http://127.0.0.1` callback is dropped on phones once the browser
+ * is in front: the sign-in page finishes, then nothing can deliver the code back to the app.
+ * The custom scheme brings the code in through the OS instead.
+ */
+export const MCP_OAUTH_REDIRECT_URI = 'anythingllm://oauth/callback';
 const CALLBACK_TIMEOUT_MS = 5 * 60_000;
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 const RESOURCE_METADATA_PATTERN = /resource_metadata="([^"]+)"/;
@@ -38,6 +44,8 @@ export type OAuthDeps = {
   fetch: typeof fetch;
   bind: (callbackPath: string) => Promise<number>;
   launch: (url: string, timeoutMs: number) => Promise<string>;
+  /** Opens the browser and resolves with an `anythingllm://` callback. Absent on a binary that has not been rebuilt. */
+  launchRedirect?: (url: string, redirectUri: string, timeoutMs: number) => Promise<string>;
   cancel: () => void;
   sha256: (input: string) => Promise<string>;
   random: (bytes: number) => string;
@@ -136,6 +144,29 @@ function authFailureText(error: unknown): string {
   return parts.join(' ').toLowerCase();
 }
 
+/** Scope from a `WWW-Authenticate` challenge, when the server tells the client which one to request. */
+export function scopeFromWwwAuthenticate(header: string | null | undefined): string | undefined {
+  if (!header) return undefined;
+  const quoted = /(?:^|[\s,])scope="([^"]*)"/i.exec(header)?.[1]?.trim();
+  if (quoted) return quoted;
+  const bare = /(?:^|[\s,])scope=([^\s,"]+)/i.exec(header)?.[1]?.trim();
+  return bare || undefined;
+}
+
+/**
+ * Prefer the challenge, then the protected resource's own scopes.
+ * The authorization server's full catalog is not a request: it includes scopes this client cannot grant,
+ * and the consent page then fails after the user signs in.
+ */
+export function selectOAuthScope(input: { challenge?: string | null; resourceScopes?: string[] | null; existing?: string | null }): string | undefined {
+  const challenge = input.challenge?.trim();
+  if (challenge) return challenge;
+  const scopes = (input.resourceScopes ?? []).map(scope => scope.trim()).filter(Boolean);
+  if (scopes.length) return scopes.join(' ');
+  const existing = input.existing?.trim();
+  return existing || undefined;
+}
+
 export function looksLikeMcpAuthFailure(error: unknown): boolean {
   const message = authFailureText(error);
   return ['401', '403', 'unauthorized', 'forbidden', 'insufficient_scope', 'invalid_token', 'invalid access token', 'missing or invalid', 'authorization required', 'bearer token rejected', 'not a valid authkit jwt', 'not a valid jwt']
@@ -204,6 +235,9 @@ function defaultDeps(): OAuthDeps {
       if (!LoopbackAuthModule?.launch) return Promise.reject(new Error('Rebuild the app to sign in to MCP servers.'));
       return LoopbackAuthModule.launch(url, timeoutMs);
     },
+    launchRedirect: LoopbackAuthModule?.launchRedirect
+      ? (url, redirectUri, timeoutMs) => LoopbackAuthModule.launchRedirect(url, redirectUri, timeoutMs)
+      : undefined,
     cancel: () => LoopbackAuthModule?.cancel?.(),
     sha256: defaultSha256,
     random: defaultRandom,
@@ -278,12 +312,23 @@ function buildAuthorizationUrl(input: {
   return url.toString();
 }
 
-async function postForm(doFetch: typeof fetch, url: string, params: Record<string, string>, operation: string): Promise<TokenResponse> {
+function tokenAuth(clientId: string, clientSecret: string | undefined, method: string | undefined, params: Record<string, string>): { headers: Record<string, string>; params: Record<string, string> } {
+  const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' };
+  const next = { ...params, client_id: clientId };
+  if (method === 'client_secret_basic' && clientSecret) {
+    headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
+  } else if (method && method !== 'none' && clientSecret) {
+    next.client_secret = clientSecret;
+  }
+  return { headers, params: next };
+}
+
+async function postForm(doFetch: typeof fetch, url: string, params: Record<string, string>, operation: string, headers?: Record<string, string>): Promise<TokenResponse> {
   let response: Response;
   try {
     response = await doFetch(url, {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: headers ?? { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
       body: formBody(params),
     });
   } catch (error) {
@@ -322,14 +367,13 @@ async function refreshLocked(server: MCPServer, deps: OAuthDeps): Promise<MCPOAu
       const metadata = await discoverProtectedResource(deps.fetch, server.url).catch(() => null);
       resource = oauthResourceIndicator(server.url, metadata?.resource);
     }
-    const token = await postForm(deps.fetch, oauth.tokenEndpoint, {
+    const refresh = tokenAuth(oauth.clientId, oauth.clientSecret, oauth.tokenEndpointAuthMethod, {
       grant_type: 'refresh_token',
       refresh_token: oauth.refreshToken,
-      client_id: oauth.clientId,
-      ...(oauth.clientSecret ? { client_secret: oauth.clientSecret } : {}),
       ...(oauth.scope ? { scope: oauth.scope } : {}),
       ...(resource ? { resource } : {}),
-    }, 'OAuth token refresh');
+    });
+    const token = await postForm(deps.fetch, oauth.tokenEndpoint, refresh.params, 'OAuth token refresh', refresh.headers);
     const updated: MCPOAuthState = {
       ...oauth,
       accessToken: token.access_token,
@@ -358,14 +402,85 @@ export async function clearMcpAuthorization(serverId: string, deps: OAuthDeps = 
   deps.setStatus(serverId, { state: 'idle' });
 }
 
-/** Browser OAuth 2.1 with PKCE, dynamic client registration, and the app's loopback listener. */
+async function readChallengeScope(doFetch: typeof fetch, serverUrl: string): Promise<string | undefined> {
+  try {
+    const response = await doFetch(serverUrl, { method: 'GET', headers: { Accept: 'application/json, text/event-stream' } });
+    return scopeFromWwwAuthenticate(response.headers.get('WWW-Authenticate'));
+  } catch {
+    return undefined;
+  }
+}
+
+function registrationRejectedRedirect(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return message.includes('redirect') || message.endsWith('registration failed (http 400).');
+}
+
+async function registerClient(deps: OAuthDeps, endpoint: string, redirectUri: string, scope: string | undefined, name: string): Promise<{ clientId: string; clientSecret?: string; method: string }> {
+  const response = await deps.fetch(endpoint, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_name: name,
+      redirect_uris: [redirectUri],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      application_type: 'native',
+      ...(scope ? { scope } : {}),
+    }),
+  });
+  const registration = await readJson(response);
+  if (!response.ok || !registration?.client_id) {
+    const description = registration?.error_description || registration?.error;
+    throw new Error(description ? `OAuth client registration failed (HTTP ${response.status}): ${description}` : `OAuth client registration failed (HTTP ${response.status}).`);
+  }
+  const method = typeof registration.token_endpoint_auth_method === 'string' ? registration.token_endpoint_auth_method : 'none';
+  return {
+    clientId: registration.client_id,
+    clientSecret: method === 'none' ? undefined : registration.client_secret,
+    method,
+  };
+}
+
+async function redirectUriFor(deps: OAuthDeps, endpoint: string | undefined, scope: string | undefined, name: string, existing: MCPOAuthState | null): Promise<{ redirectUri: string; clientId: string; clientSecret?: string; method: string; loopback: boolean }> {
+  const reuse = (redirectUri: string, loopback: boolean) => {
+    if (existing?.redirectUri === redirectUri && existing.clientId) {
+      return { redirectUri, clientId: existing.clientId, clientSecret: existing.tokenEndpointAuthMethod === 'none' ? undefined : existing.clientSecret, method: existing.tokenEndpointAuthMethod || 'none', loopback };
+    }
+    return null;
+  };
+  if (deps.launchRedirect) {
+    const reused = reuse(MCP_OAUTH_REDIRECT_URI, false);
+    if (reused) return reused;
+    if (!endpoint) throw new Error('Authorization server does not support dynamic registration, and client_id is not preconfigured');
+    try {
+      const registered = await registerClient(deps, endpoint, MCP_OAUTH_REDIRECT_URI, scope, name);
+      return { redirectUri: MCP_OAUTH_REDIRECT_URI, ...registered, loopback: false };
+    } catch (error) {
+      if (!registrationRejectedRedirect(error)) throw error;
+    }
+  }
+  const port = await deps.bind(MCP_OAUTH_CALLBACK_PATH);
+  const redirectUri = `http://127.0.0.1:${port}${MCP_OAUTH_CALLBACK_PATH}`;
+  const reused = reuse(redirectUri, true);
+  if (reused) return reused;
+  if (!endpoint) throw new Error('Authorization server does not support dynamic registration, and client_id is not preconfigured');
+  const registered = await registerClient(deps, endpoint, redirectUri, scope, name);
+  return { redirectUri, ...registered, loopback: true };
+}
+
+/** Browser OAuth 2.1 with PKCE. The code returns through the app scheme, or a loopback listener when a server rejects that. */
 export async function startMcpAuthorization(server: MCPServer, deps: OAuthDeps = defaultDeps()): Promise<void> {
   const attempt = (attempts.get(server.id) ?? 0) + 1;
   attempts.set(server.id, attempt);
   const current = () => attempts.get(server.id) === attempt;
   deps.setStatus(server.id, { state: 'authorizing' });
   try {
-    const protectedResource = await discoverProtectedResource(deps.fetch, server.url);
+    const [protectedResource, challengeScope] = await Promise.all([
+      discoverProtectedResource(deps.fetch, server.url),
+      readChallengeScope(deps.fetch, server.url),
+    ]);
     if (!current()) return;
     const issuer = protectedResource.authorization_servers?.[0];
     if (!issuer) throw new Error('Protected resource does not declare an authorization server');
@@ -375,73 +490,60 @@ export async function startMcpAuthorization(server: MCPServer, deps: OAuthDeps =
     const tokenEndpoint = metadata.token_endpoint;
     if (!authorizationEndpoint || !tokenEndpoint) throw new Error('Authorization server metadata is incomplete.');
     const existing = await deps.loadOAuth(server.id);
-    const scope = existing?.scope || protectedResource.scopes_supported?.join(' ') || metadata.scopes_supported?.join(' ');
+    const scope = selectOAuthScope({
+      challenge: challengeScope,
+      resourceScopes: protectedResource.scopes_supported,
+      existing: existing?.scope,
+    });
     const resource = oauthResourceIndicator(server.url, protectedResource.resource);
     const verifier = deps.random(32);
     const state = deps.random(16);
     const challenge = await deps.sha256(verifier);
-    const port = await deps.bind(MCP_OAUTH_CALLBACK_PATH);
+    const client = await redirectUriFor(deps, metadata.registration_endpoint, scope, server.name.trim() || 'AnythingLLM', existing);
     if (!current()) return;
-    const redirectUri = `http://127.0.0.1:${port}${MCP_OAUTH_CALLBACK_PATH}`;
-    const canReuse = existing?.redirectUri === redirectUri && !!existing.clientId;
-    let clientId = canReuse ? existing?.clientId : undefined;
-    let clientSecret = canReuse ? existing?.clientSecret : undefined;
-    if (!clientId) {
-      if (!metadata.registration_endpoint) throw new Error('Authorization server does not support dynamic registration, and client_id is not preconfigured');
-      const response = await deps.fetch(metadata.registration_endpoint, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_name: server.name.trim() || 'AnythingLLM',
-          redirect_uris: [redirectUri],
-          grant_types: ['authorization_code', 'refresh_token'],
-          response_types: ['code'],
-          token_endpoint_auth_method: 'none',
-          ...(scope ? { scope } : {}),
-        }),
-      });
-      const registration = await readJson(response);
-      if (!response.ok || !registration?.client_id) throw new Error(`OAuth client registration failed (HTTP ${response.status}).`);
-      clientId = registration.client_id;
-      clientSecret = registration.client_secret;
-    }
-    if (!current() || !clientId) return;
     const registered: MCPOAuthState = {
       enabled: true,
-      clientId,
-      clientSecret,
+      clientId: client.clientId,
+      clientSecret: client.clientSecret,
+      tokenEndpointAuthMethod: client.method,
       authorizationEndpoint,
       tokenEndpoint,
       registrationEndpoint: metadata.registration_endpoint,
-      redirectUri,
+      redirectUri: client.redirectUri,
       scope,
       resource,
     };
     await deps.storeOAuth(server.id, registered);
     if (!current()) return;
-    const callbackUrl = await deps.launch(buildAuthorizationUrl({
+    const authorizationUrl = buildAuthorizationUrl({
       authorizationEndpoint,
-      clientId,
-      redirectUri,
+      clientId: client.clientId,
+      redirectUri: client.redirectUri,
       challenge,
       state,
       scope,
       resource,
-    }), CALLBACK_TIMEOUT_MS);
+    });
+    const callbackUrl = client.loopback
+      ? await deps.launch(authorizationUrl, CALLBACK_TIMEOUT_MS)
+      : await deps.launchRedirect!(authorizationUrl, client.redirectUri, CALLBACK_TIMEOUT_MS);
     if (!current()) return;
     const callback = parseQuery(callbackUrl);
     if (callback.state !== state) throw new Error('The sign in response did not match this request.');
+    if (callback.iss && metadata.issuer && callback.iss.replace(/\/$/, '') !== metadata.issuer.replace(/\/$/, '')) {
+      throw new Error('The sign in response came from a different authorization server.');
+    }
     if (callback.error) throw new Error(callback.error_description ? `Authorization failed: ${callback.error} (${callback.error_description})` : `Authorization failed: ${callback.error}`);
     if (!callback.code) throw new Error('Authorization failed: No authorization code returned');
-    const token = await postForm(deps.fetch, tokenEndpoint, {
+    const exchange = tokenAuth(client.clientId, client.clientSecret, client.method, {
       grant_type: 'authorization_code',
       code: callback.code,
-      redirect_uri: redirectUri,
-      client_id: clientId,
+      redirect_uri: client.redirectUri,
       code_verifier: verifier,
-      ...(clientSecret ? { client_secret: clientSecret } : {}),
+      ...(scope ? { scope } : {}),
       resource,
-    }, 'OAuth code exchange');
+    });
+    const token = await postForm(deps.fetch, tokenEndpoint, exchange.params, 'OAuth code exchange', exchange.headers);
     if (!current()) return;
     await deps.storeOAuth(server.id, {
       ...registered,

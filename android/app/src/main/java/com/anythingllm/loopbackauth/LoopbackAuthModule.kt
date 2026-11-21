@@ -1,5 +1,6 @@
 package com.anythingllm.loopbackauth
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -8,6 +9,7 @@ import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import androidx.browser.customtabs.CustomTabsIntent
+import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -34,7 +36,7 @@ import kotlin.concurrent.thread
  * The OAuth logic itself (PKCE, state, token exchange) stays in JS.
  */
 class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
-    ReactContextBaseJavaModule(reactContext), LifecycleEventListener {
+    ReactContextBaseJavaModule(reactContext), LifecycleEventListener, ActivityEventListener {
 
     private class Session(val server: ServerSocket, val callbackPath: String) {
         @Volatile var settled = false
@@ -44,11 +46,18 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
         @Volatile var promise: Promise? = null
     }
 
+    /** Sign-in that comes back through anythingllm:// instead of the loopback socket. */
+    private class ExternalAuth(val redirectPrefix: String, val promise: Promise) {
+        @Volatile var settled = false
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var session: Session? = null
+    @Volatile private var external: ExternalAuth? = null
 
     init {
         reactContext.addLifecycleEventListener(this)
+        reactContext.addActivityEventListener(this)
     }
 
     override fun getName(): String = "LoopbackAuthModule"
@@ -128,9 +137,64 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * Opens the authorize URL and resolves when the OS delivers `redirectPrefix`
+     * (an anythingllm:// callback). No loopback socket, so the browser can stay in front.
+     */
+    @ReactMethod
+    fun launchRedirect(url: String, redirectPrefix: String, timeoutMs: Double, promise: Promise) {
+        external?.let { settleExternal(it, null, "cancelled", "Superseded by a new sign in.") }
+        val activity = reactContext.currentActivity
+        val stale = activity?.intent?.dataString
+        if (activity != null && stale != null && stale.startsWith(redirectPrefix)) {
+            activity.intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+        }
+        val current = ExternalAuth(redirectPrefix, promise)
+        external = current
+        mainHandler.postDelayed({
+            settleExternal(current, null, "timeout", "Sign in timed out.")
+        }, timeoutMs.toLong())
+        if (activity == null) {
+            settleExternal(current, null, "no_activity", "The app is not in the foreground.")
+            return
+        }
+        activity.runOnUiThread {
+            try {
+                CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(activity, Uri.parse(url))
+            } catch (e: ActivityNotFoundException) {
+                settleExternal(current, null, "no_browser", "No browser is available to sign in.")
+            }
+        }
+    }
+
     @ReactMethod
     fun cancel() {
         session?.let { finish(it, null, "cancelled", "Sign in was cancelled.") }
+        external?.let { settleExternal(it, null, "cancelled", "Sign in was cancelled.") }
+    }
+
+    override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {}
+
+    override fun onNewIntent(intent: Intent) {
+        deliverRedirect(intent.dataString)
+    }
+
+    private fun deliverRedirect(data: String?) {
+        if (data.isNullOrEmpty()) return
+        val current = external ?: return
+        if (!data.startsWith(current.redirectPrefix)) return
+        reactContext.currentActivity?.intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
+        settleExternal(current, data, null, null)
+    }
+
+    private fun settleExternal(current: ExternalAuth, callbackUrl: String?, code: String?, message: String?) {
+        synchronized(current) {
+            if (current.settled) return
+            current.settled = true
+        }
+        if (external === current) external = null
+        if (callbackUrl != null) current.promise.resolve(callbackUrl)
+        else current.promise.reject(code ?: "error", message ?: "Sign in failed.")
     }
 
     /** Accepts connections until the callback arrives. Anything else (eg: /favicon.ico) gets a 404. */
@@ -183,6 +247,8 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
             "Content-Type: $contentType\r\n" +
             "Content-Length: ${bytes.size}\r\n" +
             "Cache-Control: no-store\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Access-Control-Allow-Private-Network: true\r\n" +
             "Connection: close\r\n\r\n"
         val out = socket.getOutputStream()
         out.write(head.toByteArray(Charsets.US_ASCII))
@@ -229,8 +295,9 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
      * callback that raced the close (or our own bringAppForward) settle the flow first.
      */
     override fun onHostResume() {
+        deliverRedirect(reactContext.currentActivity?.intent?.dataString)
         val current = session ?: return
-        if (!current.leftApp) return
+        if (!current.leftApp || external != null) return
         mainHandler.postDelayed({ finish(current, null, "cancelled", "Sign in was cancelled.") }, CANCEL_GRACE_MS)
     }
 
@@ -241,13 +308,14 @@ class LoopbackAuthModule(private val reactContext: ReactApplicationContext) :
     override fun invalidate() {
         cancel()
         reactContext.removeLifecycleEventListener(this)
+        reactContext.removeActivityEventListener(this)
         super.invalidate()
     }
 
     companion object {
         private const val TAG = "LoopbackAuth"
         private const val PORT_PLACEHOLDER = "__LOOPBACK_PORT__"
-        private const val CANCEL_GRACE_MS = 1_500L
+        private const val CANCEL_GRACE_MS = 10_000L
         private const val RETURN_URL = "anythingllm://sign-in-complete"
 
         private fun callbackPage(failed: Boolean): String {

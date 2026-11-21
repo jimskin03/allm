@@ -107,7 +107,8 @@ export function consumePendingHfPull(): PendingHfPull | null {
 export async function handleDeepLink(url: string | null | undefined): Promise<void> {
     const link = parseDeepLink(url);
     if (!link) {
-        if (url) log('Ignoring unknown link', url);
+        // The OAuth callback carries the authorization code. Do not write that URL to the log.
+        if (url && !/^anythingllm:\/\/oauth\/callback(?:[?#]|$)/i.test(url.trim())) log('Ignoring unknown link', url);
         return;
     }
 

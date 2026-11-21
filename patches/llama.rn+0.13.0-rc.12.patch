@@ -1,0 +1,156 @@
+diff --git a/node_modules/llama.rn/cpp/jsi/RNLlamaJSI.cpp b/node_modules/llama.rn/cpp/jsi/RNLlamaJSI.cpp
+index 4699569..595c5f3 100644
+--- a/node_modules/llama.rn/cpp/jsi/RNLlamaJSI.cpp
++++ b/node_modules/llama.rn/cpp/jsi/RNLlamaJSI.cpp
+@@ -13,6 +13,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <limits>
+ #include <map>
+ #include <memory>
+ #include <mutex>
+@@ -394,6 +395,134 @@ namespace rnllama_jsi {
+         return arr;
+     }
+ 
++    // Rank-pooling models emit a classification score, not token logits.
++    // llama_rn_context_completion::rerank() still runs the generative sampler,
++    // and common_sampler::set_logits aborts the process on a null logit row
++    // (sampling.cpp GGML_ASSERT). Decode the pair and read the pooled score.
++    static std::vector<llama_token> tokenizeForRerank(const llama_vocab * vocab, const std::string & text) {
++        const int32_t text_len = (int32_t) std::min(text.size(), (size_t) std::numeric_limits<int32_t>::max());
++        int32_t cap = std::max(16, text_len + 16);
++        std::vector<llama_token> tokens((size_t) cap);
++        int32_t n = llama_tokenize(vocab, text.data(), text_len, tokens.data(), cap, false, true);
++        if (n == std::numeric_limits<int32_t>::min()) {
++            throw std::runtime_error("rerank tokenize overflow");
++        }
++        if (n < 0) {
++            cap = -n;
++            tokens.resize((size_t) cap);
++            n = llama_tokenize(vocab, text.data(), text_len, tokens.data(), cap, false, true);
++        }
++        if (n < 0) {
++            throw std::runtime_error("rerank tokenize failed");
++        }
++        tokens.resize((size_t) n);
++        return tokens;
++    }
++
++    // [BOS] query [EOS] [SEP] document [EOS], matching format_rerank_tokens.
++    static std::vector<llama_token> formatRerankTokens(
++        const llama_vocab * vocab,
++        const std::vector<llama_token> & query_tokens,
++        const std::vector<llama_token> & doc_tokens
++    ) {
++        std::vector<llama_token> result;
++        llama_token eos_token = llama_vocab_eos(vocab);
++        if (eos_token == LLAMA_TOKEN_NULL) {
++            eos_token = llama_vocab_sep(vocab);
++        }
++        result.reserve(doc_tokens.size() + query_tokens.size() + 4);
++        if (llama_vocab_get_add_bos(vocab)) {
++            result.push_back(llama_vocab_bos(vocab));
++        }
++        result.insert(result.end(), query_tokens.begin(), query_tokens.end());
++        if (llama_vocab_get_add_eos(vocab) && eos_token != LLAMA_TOKEN_NULL) {
++            result.push_back(eos_token);
++        }
++        if (llama_vocab_get_add_sep(vocab)) {
++            const llama_token sep = llama_vocab_sep(vocab);
++            if (sep != LLAMA_TOKEN_NULL) result.push_back(sep);
++        }
++        result.insert(result.end(), doc_tokens.begin(), doc_tokens.end());
++        if (llama_vocab_get_add_eos(vocab) && eos_token != LLAMA_TOKEN_NULL) {
++            result.push_back(eos_token);
++        }
++        return result;
++    }
++
++    static std::vector<float> rerankWithoutSampling(
++        rnllama::llama_rn_context * ctx,
++        const std::string & query,
++        const std::vector<std::string> & documents
++    ) {
++        if (ctx->ctx == nullptr || ctx->model == nullptr) {
++            throw std::runtime_error("rerank context is not initialized");
++        }
++        if (llama_pooling_type(ctx->ctx) != LLAMA_POOLING_TYPE_RANK) {
++            throw std::runtime_error("reranking not supported, pooling_type: " + std::to_string((int) llama_pooling_type(ctx->ctx)));
++        }
++        if (!ctx->params.embedding) {
++            throw std::runtime_error("embedding disabled but required for reranking");
++        }
++
++        const llama_vocab * vocab = llama_model_get_vocab(ctx->model);
++        const std::vector<llama_token> query_tokens = tokenizeForRerank(vocab, query);
++        const int32_t n_batch = std::max(1, (int32_t) llama_n_batch(ctx->ctx));
++        const int32_t n_ctx_limit = std::max(1, (int32_t) llama_n_ctx(ctx->ctx));
++        const int32_t max_tokens = std::min(n_batch, n_ctx_limit);
++
++        std::vector<float> scores;
++        scores.reserve(documents.size());
++
++        for (const std::string & document : documents) {
++            std::vector<llama_token> tokens = formatRerankTokens(vocab, query_tokens, tokenizeForRerank(vocab, document));
++            if (tokens.empty()) {
++                scores.push_back(-1e6f);
++                continue;
++            }
++            if ((int32_t) tokens.size() > max_tokens) {
++                tokens.resize((size_t) max_tokens);
++            }
++
++            llama_memory_t mem = llama_get_memory(ctx->ctx);
++            if (mem) {
++                llama_memory_clear(mem, true);
++            }
++
++            llama_batch batch = llama_batch_init((int32_t) tokens.size(), 0, 1);
++            batch.n_tokens = (int32_t) tokens.size();
++            for (int32_t i = 0; i < batch.n_tokens; ++i) {
++                batch.token[i] = tokens[(size_t) i];
++                batch.pos[i] = i;
++                batch.n_seq_id[i] = 1;
++                batch.seq_id[i][0] = 0;
++                // One output is enough for the pooled rank row, and it matches
++                // llama_batch_get_one, which only marks the last token.
++                batch.logits[i] = (i == batch.n_tokens - 1) ? 1 : 0;
++            }
++
++            const int rc = llama_decode(ctx->ctx, batch);
++            llama_batch_free(batch);
++            llama_synchronize(ctx->ctx);
++
++            float score = -1e6f;
++            if (rc == 0) {
++                float * data = llama_get_embeddings_seq(ctx->ctx, 0);
++                if (data == nullptr) {
++                    data = llama_get_embeddings(ctx->ctx);
++                }
++                if (data != nullptr) {
++                    score = data[0];
++                }
++            } else {
++                logError("rerank decode failed: %d", rc);
++            }
++            scores.push_back(score);
++        }
++
++        logInfo("rerank scored %zu documents without sampling", documents.size());
++        return scores;
++    }
++
+     static json rerankResultJson(const std::vector<float>& scores) {
+         json result = json::array();
+         for (size_t i = 0; i < scores.size(); i++) {
+@@ -1042,7 +1171,7 @@ namespace rnllama_jsi {
+                     if (ctx->params.embedding != true) throw std::runtime_error("Embedding is not enabled");
+                     ContextClaim claim(ctx);
+ 
+-                    std::vector<float> scores = ctx->completion->rerank(query, documents);
++                    std::vector<float> scores = rerankWithoutSampling(ctx, query, documents);
+ 
+                     json result = rerankResultJson(scores);
+                     return [result](jsi::Runtime& rt) {

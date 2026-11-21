@@ -211,6 +211,56 @@ RCT_EXPORT_METHOD(launch:(NSString *)url
   }
 }
 
+RCT_EXPORT_METHOD(launchRedirect:(NSString *)url
+                  redirectPrefix:(NSString *)redirectPrefix
+                  timeoutMs:(double)timeoutMs
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self finishWithURL:nil code:@"cancelled" message:@"Superseded by a new sign in."];
+    if (url.length == 0 || redirectPrefix.length == 0) {
+      reject(@"invalid_url", @"Could not open the sign in page.", nil);
+      return;
+    }
+    NSInteger sid = self.sessionId;
+    self.resolve = resolve;
+    self.reject = reject;
+    self.awaitingLaunch = NO;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeoutMs * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+      if (self.sessionId == sid) [self finishWithURL:nil code:@"timeout" message:@"Sign in timed out."];
+    });
+
+    NSURL *authURL = [NSURL URLWithString:url];
+    if (!authURL) {
+      [self finishWithURL:nil code:@"invalid_url" message:@"Could not open the sign in page."];
+      return;
+    }
+    __weak LoopbackAuthModule *weakSelf = self;
+    ASWebAuthenticationSession *session =
+      [[ASWebAuthenticationSession alloc] initWithURL:authURL
+                                    callbackURLScheme:@"anythingllm"
+                                    completionHandler:^(NSURL *callbackURL, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+          LoopbackAuthModule *strongSelf = weakSelf;
+          if (!strongSelf || strongSelf.sessionId != sid) return;
+          NSString *absolute = callbackURL.absoluteString ?: @"";
+          if (absolute.length > 0 && [[absolute lowercaseString] hasPrefix:[redirectPrefix lowercaseString]]) {
+            [strongSelf finishWithURL:absolute code:nil message:nil];
+          } else {
+            [strongSelf finishWithURL:nil code:@"cancelled" message:@"Sign in was cancelled."];
+          }
+        });
+      }];
+    session.presentationContextProvider = self;
+    session.prefersEphemeralWebBrowserSession = NO;
+    self.authSession = session;
+    if (![session start]) {
+      [self finishWithURL:nil code:@"no_browser" message:@"Could not open the sign in page."];
+    }
+  });
+}
+
 RCT_EXPORT_METHOD(cancel)
 {
   dispatch_async(dispatch_get_main_queue(), ^{
